@@ -34,10 +34,10 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `AI_AGENT_ARCHITECTURE.md` | 完整架构设计方案 |
-| `DEVELOPMENT_PLAN.md` | 分阶段开发计划 |
-| `NEXT_DEVELOPMENT.md` | 下一步开发建议：Runtime 多轮任务状态 |
-| `PROJECT.md` | 项目状态和交接说明 |
+| `docs/architecture.md` | 完整架构设计方案 |
+| `docs/development-plan.md` | 分阶段开发计划 |
+| `docs/next-development.md` | 下一步开发建议：Runtime 多轮任务状态 |
+| `docs/project-status.md` | 项目状态和交接说明 |
 | `README.md` | 项目简介、安装方式、测试命令 |
 
 ## 当前进展
@@ -54,7 +54,7 @@
 - `src/agent_system/__init__.py`
 - `tests/test_import.py`
 - `.gitignore`
-- `PROJECT.md`
+- `docs/project-status.md`
 - `AGENTS.md`
 
 验证结果：
@@ -357,9 +357,12 @@ uv run pytest
 ```text
 .
 ├── AGENTS.md
-├── AI_AGENT_ARCHITECTURE.md
-├── DEVELOPMENT_PLAN.md
-├── PROJECT.md
+├── docs/
+│   ├── README.md
+│   ├── architecture.md
+│   ├── development-plan.md
+│   ├── next-development.md
+│   └── project-status.md
 ├── README.md
 ├── configs/
 │   └── default.yaml
@@ -422,7 +425,7 @@ uv run pytest
 
 下一步建议继续完善权限策略和工具调用审批。
 
-如果优先关注 Agent 主体能力，见 `NEXT_DEVELOPMENT.md`，建议先做 Runtime 多轮任务状态。
+如果优先关注 Agent 主体能力，见 `docs/next-development.md`，建议先做 Runtime 多轮任务状态。
 
 建议实现：
 
@@ -489,7 +492,7 @@ rg --files
 后续 Codex Agent 接手时建议按以下顺序阅读：
 
 1. 先读 `AGENTS.md`，了解项目规则和当前状态。
-2. 再读 `DEVELOPMENT_PLAN.md`，确认下一阶段任务。
-3. 需要架构细节时读 `AI_AGENT_ARCHITECTURE.md`。
+2. 再读 `docs/development-plan.md`，确认下一阶段任务。
+3. 需要架构细节时读 `docs/architecture.md`。
 4. 编码前用 `rg --files` 查看实际文件状态。
 5. 完成修改后运行 `uv run pytest`。

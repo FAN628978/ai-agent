@@ -16,19 +16,23 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `AI_AGENT_ARCHITECTURE.md` | 完整架构设计方案，包含模块划分、数据模型示例、Runtime 流程、工具系统、Memory、Context、权限、可观测等设计 |
-| `DEVELOPMENT_PLAN.md` | 分阶段开发计划，从项目初始化到 Runtime、工具系统、CLI、Context、LLM、可观测 |
-| `NEXT_DEVELOPMENT.md` | 下一步开发建议：Runtime 多轮任务状态 |
-| `PROJECT.md` | 当前项目状态和交接说明，供后续 Agent 快速接手 |
+| `docs/README.md` | 文档索引和推荐阅读顺序 |
+| `docs/architecture.md` | 完整架构设计方案，包含模块划分、数据模型示例、Runtime 流程、工具系统、Memory、Context、权限、可观测等设计 |
+| `docs/development-plan.md` | 分阶段开发计划，从项目初始化到 Runtime、工具系统、CLI、Context、LLM、可观测 |
+| `docs/next-development.md` | 下一步开发建议：Runtime 多轮任务状态 |
+| `docs/project-status.md` | 当前项目状态和交接说明，供后续 Agent 快速接手 |
 | `README.md` | 项目简介、安装方式、测试命令 |
 
 ## 当前目录结构
 
 ```text
 .
-├── AI_AGENT_ARCHITECTURE.md
-├── DEVELOPMENT_PLAN.md
-├── PROJECT.md
+├── docs/
+│   ├── README.md
+│   ├── architecture.md
+│   ├── development-plan.md
+│   ├── next-development.md
+│   └── project-status.md
 ├── README.md
 ├── configs/
 │   └── default.yaml
@@ -132,7 +136,7 @@ uv run pytest
 影响范围：
 
 - 项目已经具备 Runtime、工具系统和 LLM 接入所需的基础协议模型。
-- 模型字段参考 `AI_AGENT_ARCHITECTURE.md` 中的核心数据模型示例。
+- 模型字段参考 `docs/architecture.md` 中的核心数据模型示例。
 - 当前只实现数据模型和测试，没有实现 Runtime 执行逻辑。
 
 验证结果：
@@ -494,7 +498,7 @@ configs/default.yaml
 
 下一步建议继续完善权限策略和工具调用审批。
 
-如果优先关注 Agent 主体能力，见 `NEXT_DEVELOPMENT.md`，建议先做 Runtime 多轮任务状态。
+如果优先关注 Agent 主体能力，见 `docs/next-development.md`，建议先做 Runtime 多轮任务状态。
 
 建议实现：
 
@@ -533,8 +537,8 @@ configs/default.yaml
 
 - 严格按需求做最小改动。
 - 不做无关重构。
-- 新增能力优先参考 `DEVELOPMENT_PLAN.md` 的阶段顺序。
-- 数据结构优先参考 `AI_AGENT_ARCHITECTURE.md`。
+- 新增能力优先参考 `docs/development-plan.md` 的阶段顺序。
+- 数据结构优先参考 `docs/architecture.md`。
 - 每个阶段都补充对应测试。
 - 修改后运行 `uv run pytest` 验证。
 
@@ -579,9 +583,9 @@ rg --files
 
 接手本项目时建议按以下顺序阅读：
 
-1. 先读 `PROJECT.md`，了解当前状态。
-2. 再读 `DEVELOPMENT_PLAN.md`，确认下一阶段任务。
-3. 需要架构细节时读 `AI_AGENT_ARCHITECTURE.md`。
+1. 先读 `docs/project-status.md`，了解当前状态。
+2. 再读 `docs/development-plan.md`，确认下一阶段任务。
+3. 需要架构细节时读 `docs/architecture.md`。
 4. 开始编码前用 `rg --files` 查看实际文件状态。
 5. 完成修改后运行 `uv run pytest`。
 

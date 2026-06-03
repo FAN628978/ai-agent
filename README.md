@@ -6,8 +6,11 @@
 
 ## 项目文档
 
-- `AI_AGENT_ARCHITECTURE.md`：完整架构设计方案。
-- `DEVELOPMENT_PLAN.md`：分阶段开发计划。
+- `docs/README.md`：文档索引和推荐阅读顺序。
+- `docs/architecture.md`：完整架构设计方案。
+- `docs/development-plan.md`：分阶段开发计划。
+- `docs/project-status.md`：当前项目状态和交接说明。
+- `docs/next-development.md`：下一步开发建议和后续大模块清单。
 
 ## 当前阶段
 
