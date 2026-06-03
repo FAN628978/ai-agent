@@ -17,6 +17,7 @@
 | 文件 | 说明 |
 | --- | --- |
 | `docs/README.md` | 文档索引和推荐阅读顺序 |
+| `docs/codebase-guide.md` | 当前代码结构、运行链路、模块职责和扩展点 |
 | `docs/architecture.md` | 完整架构设计方案，包含模块划分、数据模型示例、Runtime 流程、工具系统、Memory、Context、权限、可观测等设计 |
 | `docs/development-plan.md` | 分阶段开发计划，从项目初始化到 Runtime、工具系统、CLI、Context、LLM、可观测 |
 | `docs/next-development.md` | 下一步开发建议：Runtime 多轮任务状态 |

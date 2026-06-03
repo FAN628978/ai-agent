@@ -7,6 +7,7 @@
 ## 项目文档
 
 - `docs/README.md`：文档索引和推荐阅读顺序。
+- `docs/codebase-guide.md`：当前代码结构、运行链路和扩展点说明。
 - `docs/architecture.md`：完整架构设计方案。
 - `docs/development-plan.md`：分阶段开发计划。
 - `docs/project-status.md`：当前项目状态和交接说明。
