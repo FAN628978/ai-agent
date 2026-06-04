@@ -175,10 +175,12 @@ src/agent_system/execution/
 - `ToolRegistry`
 - `ToolRouter`
 - 内置工具：
-  - `file.read`
-  - `file.write`
-  - `grep.search`
-  - `shell.run`
+  - `Read`
+  - `Write`
+  - `Edit`
+  - `Grep`
+  - `Glob`
+  - `Bash`
 
 ### 建议路径
 
@@ -200,10 +202,12 @@ src/agent_system/tools/
 
 | 工具 | 默认策略 |
 | --- | --- |
-| `file.read` | 允许 |
-| `file.write` | 允许写工作区并记录事件 |
-| `grep.search` | 允许 |
-| `shell.run` | 默认关闭，需要显式配置开启 |
+| `Read` | 允许 |
+| `Write` | 允许写工作区并记录事件 |
+| `Edit` | 允许修改工作区文件并记录事件 |
+| `Grep` | 允许 |
+| `Glob` | 允许 |
+| `Bash` | 默认关闭，需要显式配置开启 |
 | 删除文件 | 第一版不支持 |
 | 联网操作 | 第一版不支持 |
 
@@ -435,7 +439,9 @@ agent-system run "读取当前目录结构"
 
 - 文件读取
 - 文件写入
+- 文件修改
 - 文本搜索
+- 路径匹配
 - 受控 Shell
 
 验收：

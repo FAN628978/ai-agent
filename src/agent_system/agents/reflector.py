@@ -11,11 +11,18 @@ class Reflector:
         missing_steps = sorted(expected_steps - completed_steps)
 
         if missing_steps:
+            failed_summaries = [
+                f"{step.step_id}: {step.summary}"
+                for step in result.step_results
+                if not step.ok
+            ]
+            issues = [f"Missing completed steps: {', '.join(missing_steps)}"]
+            issues.extend(failed_summaries)
             return Critique(
                 done=False,
                 confidence=0.4,
-                issues=[f"Missing completed steps: {', '.join(missing_steps)}"],
-                next_action="retry",
+                issues=issues,
+                next_action="ask_user",
             )
 
         return Critique(done=True, confidence=0.9)

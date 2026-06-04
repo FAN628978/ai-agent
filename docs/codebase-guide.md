@@ -15,7 +15,6 @@ agent-system = "agent_system.api.cli:main"
 
 - `agent-system plan "任务"`：创建计划后停止。
 - `agent-system run "任务"`：创建计划并执行。
-- `agent-system chat`：直接调用配置里的 Chat LLM，绕过 Runtime。
 - `agent-system runtime-chat`：每轮先经过 `AgentRuntime`，再整理成 Assistant 回复。
 
 ## 目录职责
@@ -29,6 +28,7 @@ src/agent_system/
 ├── execution/    Plan Step 执行器
 ├── llm/          OpenAI-compatible LLM Client
 ├── models/       Runtime 数据协议
+├── observability/ 结构化日志
 ├── prompts/      Prompt Registry 和模板
 ├── runtime/      AgentRuntime、工厂、checkpoint
 ├── skills/       能力元数据注册
@@ -193,12 +193,14 @@ PLAN 模式的链路类似，但 `AgentRuntime` 在 `plan.created` 后输出 `ru
 它会：
 
 1. 加载 `AppConfig`。
-2. 注册内置工具：
-   - `file.read`
-   - `file.write`
-   - `grep.search`
-   - `shell.run`
-3. 根据 `permissions.default_shell` 决定 `shell.run` 是否启用。
+2. 注册六个核心工具：
+   - `Read`
+   - `Write`
+   - `Edit`
+   - `Grep`
+   - `Glob`
+   - `Bash`
+3. 根据 `permissions.default_shell` 决定 `Bash` 是否启用。
 4. 注册默认 skills：
    - `coding`
    - `runtime`
@@ -207,6 +209,25 @@ PLAN 模式的链路类似，但 `AgentRuntime` 在 `plan.created` 后输出 `ru
 6. 如果 provider 是 `openai-compatible`，创建 `OpenAICompatibleClient` 并注入 Planner。
 7. 创建 `ToolRouter` 和 `Executor`。
 8. 返回 `AgentRuntime`。
+
+## Observability
+
+位置：`observability/logging.py`
+
+当前实现 `JsonlEventLogger`，默认通过 `configs/default.yaml` 写入：
+
+```text
+logs/agent-system.jsonl
+```
+
+记录内容：
+
+- Runtime 事件类型、时间戳、session_id、task_id、user_id、workspace_id。
+- `plan.created` 只记录 goal、mode、step_count、risk_count。
+- `execution.completed` 不记录完整 `tool_results`，只保留执行摘要。
+- `reflection.completed` 只记录 done、confidence、next_action、issue_count。
+
+第一版不做日志轮转、OpenTelemetry、metrics 或 trace 查询。
 
 ### Checkpoint
 
@@ -225,10 +246,13 @@ PLAN 模式的链路类似，但 `AgentRuntime` 在 `plan.created` 后输出 `ru
 
 规则 Planner 的能力很小：
 
-- 请求中包含 `read/open/show/cat/读取/打开/查看` 时建议 `file.read`。
-- 请求中包含 `grep/search/find/搜索/查找` 时建议 `grep.search`。
-- 对明显文件路径做简单提取。
-- 为 `file.read` 和 `grep.search` 生成结构化 `ToolCall`。
+- 请求中包含 `read/open/show/cat/读取/打开/查看` 时建议 `Read`。
+- 请求中包含 `write/create/overwrite/新建/写入/覆盖` 时建议 `Write`。
+- 请求中包含 `edit/replace/修改/替换` 时建议 `Edit`。
+- 请求中包含 `grep/search/搜索/查找` 时建议 `Grep`。
+- 请求中包含 `list/tree/目录/当前目录/项目/结构/找文件` 时建议 `Glob`。
+- 请求中明确要求执行命令时建议 `Bash`。
+- 对明显文件路径做简单提取，并尽量生成结构化 `ToolCall`。
 
 LLM Planner 的流程：
 
@@ -256,7 +280,7 @@ LLM Planner 的流程：
 1. 已在 `state.completed_steps` 的 step 会跳过。
 2. 如果 step 有 `tool_calls`，优先执行结构化工具调用。
 3. 如果没有 `tool_calls`，再从 `suggested_tools` 推断参数。
-4. 如果没有可执行工具，走 `runtime.mock_step`，表示该 step 已被 mock 完成。
+4. 如果没有可执行工具，step 会失败，不会被模拟完成。
 5. 只要工具全部成功，step 标记为完成。
 6. 工具失败时 step 失败，不写入 completed。
 
@@ -346,14 +370,16 @@ LLM Planner 的流程：
 
 位置：`tools/builtin/`
 
-当前内置工具：
+当前内置六个核心工具：
 
-- `file.read`：读取工作区内文件。
-- `file.write`：写入工作区内文件。
-- `grep.search`：在工作区内搜索文本。
-- `shell.run`：执行 shell 命令，默认禁用。
+- `Read`：读取工作区内文件。
+- `Write`：新建或覆盖工作区内文件。
+- `Edit`：替换已有文件中的文本。
+- `Grep`：在工作区内搜索文本。
+- `Glob`：按路径模式查找文件或目录。
+- `Bash`：执行 shell 命令，默认禁用。
 
-`shell.run` 是否启用由 `configs/default.yaml` 的 `permissions.default_shell` 决定。默认是 `deny`。
+`Bash` 是否启用由 `configs/default.yaml` 的 `permissions.default_shell` 决定。默认是 `deny`。
 
 ## LLM Client
 
@@ -466,6 +492,7 @@ Skills 当前是能力元数据层，不直接执行动作。
 - context 预算。
 - shell/network 默认权限。
 - memory 开关。
+- logging 开关和 JSONL 文件路径。
 
 ## CLI
 
@@ -494,34 +521,28 @@ CLI 使用 Typer 和 Rich。
 
 创建 PLAN 模式 `UserRequest`，只生成 plan，不执行工具。
 
-### chat
-
-`agent-system chat`
-
-直接调用 Chat LLM，不经过 `AgentRuntime`。适合测试本地模型对话能力。
-
-行为：
-
-- 保留当前 CLI 进程内的 messages。
-- 默认隐藏 `<think>...</think>`。
-- `--show-reasoning` 可显示推理块。
-- `--no-llm` 时改走 Runtime 事件输出。
-
 ### runtime-chat
 
 `agent-system runtime-chat`
 
 每轮用户输入都会：
 
-1. 把 CLI 内存中的历史拼进 request content。
-2. 调用 `AgentRuntime`。
+1. 先处理 runtime-chat 斜杠命令。
+2. 普通输入会调用 `AgentRuntime`。
 3. 根据 Runtime events 生成 fallback answer。
 4. 如果启用 LLM，再用 Chat LLM 合成最终回复。
 
+支持的斜杠命令：
+
+- `/help`：查看可用命令。
+- `/clear`：清空当前 CLI 本地回复历史。
+- `/tools`：查看当前 Runtime 可用工具。
+- `/exit`、`/quit`：退出对话。
+
 当前限制：
 
-- 历史主要在 CLI 层维护。
-- Runtime 本身还没有 Session Store。
+- LLM 回复合成历史仍主要在 CLI 层维护。
+- `/clear` 不清理 Runtime 内部 session 状态。
 
 ## 测试结构
 

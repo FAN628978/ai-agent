@@ -33,3 +33,8 @@ permissions:
 memory:
   enabled: false
   auto_write: false
+
+logging:
+  enabled: true
+  path: logs/agent-system.jsonl
+  level: info

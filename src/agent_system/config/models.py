@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 from agent_system.models import RunMode
@@ -35,15 +37,21 @@ class ContextConfig(BaseModel):
 
 
 class PermissionsConfig(BaseModel):
-    default_shell: str = "deny"
-    workspace_write: str = "allow"
-    network: str = "deny"
-    destructive_commands: str = "deny"
+    default_shell: Literal["allow", "ask", "deny"] = "deny"
+    workspace_write: Literal["allow", "ask", "deny"] = "allow"
+    network: Literal["allow", "ask", "deny"] = "deny"
+    destructive_commands: Literal["allow", "ask", "deny"] = "deny"
 
 
 class MemoryConfig(BaseModel):
     enabled: bool = False
     auto_write: bool = False
+
+
+class LoggingConfig(BaseModel):
+    enabled: bool = True
+    path: str = "logs/agent-system.jsonl"
+    level: str = "info"
 
 
 class AppConfig(BaseModel):
@@ -52,3 +60,4 @@ class AppConfig(BaseModel):
     context: ContextConfig = ContextConfig()
     permissions: PermissionsConfig = PermissionsConfig()
     memory: MemoryConfig = MemoryConfig()
+    logging: LoggingConfig = LoggingConfig()

@@ -9,7 +9,7 @@ from agent_system.tools.schemas import ToolPermission, ToolSchema
 
 class GrepSearchTool(BaseTool):
     schema = ToolSchema(
-        name="grep.search",
+        name="Grep",
         description="Search text files in the workspace using a regular expression.",
         input_schema={
             "type": "object",

@@ -26,7 +26,6 @@
 - 核心数据模型。
 - 最小 Runtime 主循环。
 - 配置驱动的本地 MiniMax Planner LLM 接入。
-- ChatGPT 式 CLI 连续对话入口。
 - Runtime 对话入口。
 - 结构化 ToolCall 规划、执行和工具结果展示。
 - Prompt Registry 与 Planner Context 组装。
@@ -68,18 +67,6 @@ uv run agent-system plan "为项目生成一个下一步开发计划"
 uv run agent-system run "帮我分析当前项目"
 ```
 
-进入 ChatGPT 式连续对话：
-
-```bash
-uv run agent-system chat
-```
-
-聊天模式会保留当前会话上下文历史，默认使用 `configs/default.yaml` 中的 `model.chat`，并默认隐藏 `<think>...</think>` 内容。需要显示推理块时可加：
-
-```bash
-uv run agent-system chat --show-reasoning
-```
-
 进入 Runtime 对话模式：
 
 ```bash
@@ -91,6 +78,13 @@ Runtime 对话模式每轮都会先经过 `AgentRuntime`，再把执行结果整
 ```bash
 uv run agent-system runtime-chat --no-llm
 ```
+
+Runtime 对话模式支持斜杠命令：
+
+- `/help`：查看可用命令。
+- `/clear`：清空当前 CLI 本地回复历史。
+- `/tools`：查看当前 Runtime 可用工具。
+- `/exit`、`/quit`：退出对话。
 
 使用规则 Planner，不调用本地模型：
 
@@ -110,7 +104,7 @@ uv run agent-system plan "Inspect project" --json
 uv run agent-system run "Read README.md" --no-llm --show-tool-results
 ```
 
-注意：当前 CLI 已能对话、生成计划，并能通过 Runtime 执行明确建议的低风险工具。没有工具建议的步骤仍会走 mock 执行。
+注意：当前 CLI 已能通过 Runtime 对话、生成计划，并能执行明确建议的低风险工具。没有可执行工具的步骤不会被模拟完成，会提示需要补充信息。
 
 ## 本地 MiniMax 测试
 
@@ -130,6 +124,11 @@ model:
   max_tokens: 1024
   temperature: 0.2
   chat_history_limit: 20
+
+logging:
+  enabled: true
+  path: logs/agent-system.jsonl
+  level: info
 ```
 
 默认地址：
@@ -161,4 +160,4 @@ uv run pytest tests\integration
 
 ## 后续计划
 
-下一步建议继续完善权限策略和工具调用审批，尤其是 `shell.run` 的显式启用和审计。
+下一步建议继续完善 Runtime 多轮状态、LLM Reflector，以及 `Bash` 工具的显式启用和审计。

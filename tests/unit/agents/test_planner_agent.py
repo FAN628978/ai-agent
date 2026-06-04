@@ -31,7 +31,7 @@ def make_request() -> UserRequest:
     )
 
 
-def test_rule_planner_suggests_file_read_for_read_requests() -> None:
+def test_rule_planner_suggests_read_for_read_requests() -> None:
     planner = PlannerAgent()
     request = UserRequest(
         session_id="session-1",
@@ -42,7 +42,21 @@ def test_rule_planner_suggests_file_read_for_read_requests() -> None:
 
     plan = asyncio.run(planner.make_plan(request))
 
-    assert plan.steps[0].suggested_tools == ["file.read"]
+    assert plan.steps[0].suggested_tools == ["Read"]
+
+
+def test_rule_planner_strips_markdown_and_cjk_punctuation_from_paths() -> None:
+    planner = PlannerAgent()
+    request = UserRequest(
+        session_id="session-1",
+        user_id="user-1",
+        workspace_id="workspace-1",
+        content="读取 `D:\\code\\ai-agent`。",
+    )
+
+    plan = asyncio.run(planner.make_plan(request))
+
+    assert plan.steps[0].tool_calls[0].arguments == {"path": "D:\\code\\ai-agent"}
 
 
 def test_rule_planner_suggests_grep_for_search_requests() -> None:
@@ -56,7 +70,38 @@ def test_rule_planner_suggests_grep_for_search_requests() -> None:
 
     plan = asyncio.run(planner.make_plan(request))
 
-    assert plan.steps[0].suggested_tools == ["grep.search"]
+    assert plan.steps[0].suggested_tools == ["Grep"]
+
+
+def test_rule_planner_suggests_glob_for_project_directory_requests() -> None:
+    planner = PlannerAgent()
+    request = UserRequest(
+        session_id="session-1",
+        user_id="user-1",
+        workspace_id="workspace-1",
+        content="读取当前目录的项目",
+    )
+
+    plan = asyncio.run(planner.make_plan(request))
+
+    assert plan.steps[0].suggested_tools == ["Glob"]
+    assert plan.steps[0].tool_calls[0].name == "Glob"
+    assert plan.steps[0].tool_calls[0].arguments == {"pattern": "*", "path": "."}
+
+
+def test_rule_planner_suggests_glob_for_english_project_requests() -> None:
+    planner = PlannerAgent()
+    request = UserRequest(
+        session_id="session-1",
+        user_id="user-1",
+        workspace_id="workspace-1",
+        content="Inspect project",
+    )
+
+    plan = asyncio.run(planner.make_plan(request))
+
+    assert plan.steps[0].suggested_tools == ["Glob"]
+    assert plan.steps[0].tool_calls[0].name == "Glob"
 
 
 def test_planner_uses_llm_json_plan() -> None:
@@ -90,6 +135,42 @@ def test_planner_uses_llm_json_plan() -> None:
     assert plan.assumptions == ["LLM planner is enabled"]
     assert client.messages[0].role == "system"
     assert "Available tools" in client.messages[1].content
+
+
+def test_llm_plan_without_tools_gets_rule_tool_hints_for_project_requests() -> None:
+    client = FakeLLMClient(
+        """
+        {
+          "goal": "Read current project",
+          "steps": [
+            {
+              "id": "step-1",
+              "title": "Read project",
+              "objective": "读取当前项目",
+              "suggested_tools": [],
+              "tool_calls": [],
+              "risk": "low",
+              "acceptance": ["Project is inspected"]
+            }
+          ],
+          "assumptions": [],
+          "risks": []
+        }
+        """
+    )
+    planner = PlannerAgent(llm_client=client)
+    request = UserRequest(
+        session_id="session-1",
+        user_id="user-1",
+        workspace_id="workspace-1",
+        content="读取当前项目",
+    )
+
+    plan = asyncio.run(planner.make_plan(request))
+
+    assert plan.steps[0].suggested_tools == ["Glob"]
+    assert plan.steps[0].tool_calls[0].name == "Glob"
+    assert plan.steps[0].tool_calls[0].arguments == {"pattern": "*", "path": "."}
 
 
 def test_planner_falls_back_when_llm_output_is_invalid() -> None:
@@ -148,10 +229,10 @@ def test_planner_normalizes_llm_tool_calls() -> None:
               "title": "Read README",
               "objective": "Read README.md",
               "depends_on": [],
-              "suggested_tools": ["file.read"],
+              "suggested_tools": ["Read"],
               "tool_calls": [
                 {
-                  "name": "file.read",
+                  "name": "Read",
                   "arguments": {"path": "README.md"}
                 }
               ],
@@ -168,6 +249,6 @@ def test_planner_normalizes_llm_tool_calls() -> None:
 
     plan = asyncio.run(planner.make_plan(make_request()))
 
-    assert plan.steps[0].tool_calls[0].id == "1:file.read:1"
-    assert plan.steps[0].tool_calls[0].name == "file.read"
+    assert plan.steps[0].tool_calls[0].id == "1:Read:1"
+    assert plan.steps[0].tool_calls[0].name == "Read"
     assert plan.steps[0].tool_calls[0].arguments == {"path": "README.md"}

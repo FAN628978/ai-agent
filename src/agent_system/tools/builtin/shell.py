@@ -7,9 +7,9 @@ from agent_system.tools.base import BaseTool, ToolContext
 from agent_system.tools.schemas import ToolPermission, ToolSchema
 
 
-class ShellRunTool(BaseTool):
+class BashTool(BaseTool):
     schema = ToolSchema(
-        name="shell.run",
+        name="Bash",
         description="Run a shell command in the workspace.",
         input_schema={
             "type": "object",
@@ -22,6 +22,7 @@ class ShellRunTool(BaseTool):
         risk="high",
         permission=ToolPermission(filesystem="write", shell=True, approval_required=True),
         read_only=False,
+        concurrency_safe=False,
     )
 
     def __init__(self, *, enabled: bool = False) -> None:
@@ -34,7 +35,7 @@ class ShellRunTool(BaseTool):
                 name=self.schema.name,
                 ok=False,
                 content=None,
-                error="shell.run is disabled",
+                error="Bash is disabled",
             )
 
         command = str(arguments["command"])

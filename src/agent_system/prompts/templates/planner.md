@@ -23,10 +23,12 @@ $skill_schemas
 Tool planning rules:
 - Use suggested_tools only from the available tool names.
 - Each tool_calls item must include id, name, arguments.
-- For file.read use arguments {"path": "..."}.
-- For file.write use arguments {"path": "...", "content": "..."}.
-- For grep.search use arguments {"pattern": "...", "path": "..."}.
-- For shell.run use arguments {"command": "..."} only when explicitly required.
+- For Read use arguments {"path": "..."}.
+- For Write use arguments {"path": "...", "content": "..."}.
+- For Edit use arguments {"path": "...", "old_string": "...", "new_string": "..."}.
+- For Grep use arguments {"pattern": "...", "path": "..."}.
+- For Glob use arguments {"pattern": "...", "path": "..."}.
+- For Bash use arguments {"command": "..."} only when explicitly required.
 
 Workspace:
 $workspace

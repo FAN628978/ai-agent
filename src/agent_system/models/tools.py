@@ -11,6 +11,7 @@ class ToolCall(BaseModel):
     arguments: dict[str, Any]
     timeout_s: float = 30
     requires_approval: bool = False
+    approved: bool = False
 
 
 class ToolResult(BaseModel):

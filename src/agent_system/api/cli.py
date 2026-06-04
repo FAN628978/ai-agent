@@ -11,7 +11,8 @@ from rich.console import Console
 from agent_system.config import load_config
 from agent_system.llm import ChatMessage, OpenAICompatibleClient
 from agent_system.models import AgentEvent, RunMode, UserRequest
-from agent_system.runtime import create_runtime_from_config
+from agent_system.runtime import AgentRuntime, create_runtime_from_config
+from agent_system.tools.schemas import ToolSchema
 
 app = typer.Typer(help="Run the local AI Agent runtime.")
 console = Console()
@@ -52,53 +53,6 @@ def plan(
     _print_events(events, json_output, show_tool_results=False)
 
 
-@app.command()
-def chat(
-    config: Path = typer.Option(Path("configs/default.yaml"), "--config", "-c", help="Config file path."),
-    user_id: str = typer.Option("local-user", help="User id for the request."),
-    workspace_id: str = typer.Option(".", help="Workspace id or path for the request."),
-    no_llm: bool = typer.Option(False, "--no-llm", help="Use the rule-based planner instead of configured LLM."),
-    show_reasoning: bool = typer.Option(False, "--show-reasoning", help="Show <think>...</think> reasoning blocks."),
-) -> None:
-    """Start a ChatGPT-like local chat loop."""
-    app_config = load_config(config)
-    messages = [
-        ChatMessage(role="system", content=app_config.model.chat_system_prompt),
-    ]
-    client = OpenAICompatibleClient(
-        base_url=app_config.model.base_url,
-        model=app_config.model.chat,
-        api_key=app_config.model.api_key,
-        timeout_s=app_config.model.timeout_s,
-    )
-
-    console.print("Agent chat started. Type 'exit' or 'quit' to stop.")
-    while True:
-        content = typer.prompt("You")
-        if content.strip().lower() in {"exit", "quit"}:
-            raise typer.Exit()
-
-        if no_llm:
-            request = _make_request(content, RunMode.ACT, user_id, workspace_id)
-            events = asyncio.run(_run_request(request, config, no_llm))
-            _print_events(events, json_output=False, show_tool_results=False)
-            continue
-
-        answer = asyncio.run(
-            _chat_once(
-                client=client,
-                messages=messages,
-                content=content,
-                max_tokens=app_config.model.max_tokens,
-                temperature=app_config.model.temperature,
-                history_limit=app_config.model.chat_history_limit,
-                show_reasoning=show_reasoning,
-            )
-        )
-        console.print("[bold green]Assistant[/bold green]")
-        console.print(answer)
-
-
 @app.command("runtime-chat")
 def runtime_chat(
     config: Path = typer.Option(Path("configs/default.yaml"), "--config", "-c", help="Config file path."),
@@ -111,7 +65,6 @@ def runtime_chat(
     """Start a chat loop that routes each turn through AgentRuntime."""
     app_config = load_config(config)
     session_id = str(uuid4())
-    history: list[tuple[str, str]] = []
     responder = None
     if not no_llm:
         responder = OpenAICompatibleClient(
@@ -120,21 +73,35 @@ def runtime_chat(
             api_key=app_config.model.api_key,
             timeout_s=app_config.model.timeout_s,
         )
+    runtime_config = app_config.model_copy(deep=True)
+    if no_llm:
+        runtime_config.model.provider = "rule"
+    runtime = create_runtime_from_config(runtime_config, workspace_root=workspace_id)
+    history: list[tuple[str, str]] = []
 
-    console.print("Runtime chat started. Type 'exit' or 'quit' to stop.")
+    console.print("Runtime chat started. Type '/help' for commands.")
     while True:
         content = typer.prompt("You")
-        if content.strip().lower() in {"exit", "quit"}:
+        if _is_exit_command(content):
             raise typer.Exit()
+        if _handle_runtime_slash_command(content, history, runtime):
+            continue
+        if _is_tool_list_request(content):
+            answer = _render_available_tools(runtime)
+            history.append((content, answer))
+            history[:] = history[-app_config.model.chat_history_limit :]
+            console.print("[bold green]Assistant[/bold green]")
+            console.print(answer)
+            continue
 
         request = UserRequest(
             session_id=session_id,
             user_id=user_id,
             workspace_id=workspace_id,
-            content=_runtime_request_content(history, content),
+            content=content,
             mode=RunMode.ACT,
         )
-        events = asyncio.run(_run_request(request, config, no_llm))
+        events = asyncio.run(_run_runtime(runtime, request))
         if show_events:
             _print_events(events, json_output=False, show_tool_results=True)
 
@@ -173,35 +140,11 @@ async def _run_request(request: UserRequest, config_path: Path, no_llm: bool) ->
     if no_llm:
         config.model.provider = "rule"
     runtime = create_runtime_from_config(config, workspace_root=request.workspace_id)
+    return await _run_runtime(runtime, request)
+
+
+async def _run_runtime(runtime: AgentRuntime, request: UserRequest) -> list[AgentEvent]:
     return [event async for event in runtime.run(request)]
-
-
-def _runtime_request_content(history: list[tuple[str, str]], content: str, limit: int = 6) -> str:
-    if not history:
-        return content
-    recent = history[-limit:]
-    transcript = "\n".join(f"User: {user}\nAssistant: {assistant}" for user, assistant in recent)
-    return f"Conversation so far:\n{transcript}\n\nCurrent user request:\n{content}"
-
-
-async def _chat_once(
-    client: OpenAICompatibleClient,
-    messages: list[ChatMessage],
-    content: str,
-    max_tokens: int,
-    temperature: float,
-    history_limit: int,
-    show_reasoning: bool,
-) -> str:
-    messages.append(ChatMessage(role="user", content=content))
-    _trim_chat_history(messages, history_limit)
-    response = await client.chat(messages, max_tokens=max_tokens, temperature=temperature)
-    answer = response.content.strip()
-    if not show_reasoning:
-        answer = _strip_reasoning_blocks(answer).strip()
-    messages.append(ChatMessage(role="assistant", content=answer))
-    _trim_chat_history(messages, history_limit)
-    return answer
 
 
 async def _synthesize_runtime_answer(
@@ -220,7 +163,9 @@ async def _synthesize_runtime_answer(
             content=(
                 "You are the final responder for a local AgentRuntime. "
                 "Answer the user's latest message directly in concise Chinese. "
-                "Use the runtime observation as ground truth. "
+                "Use only the runtime observation as ground truth. "
+                "Never invent command output or filesystem contents. "
+                "If the runtime observation has no real tool result, say that no real tool result is available. "
                 "Do not mention internal event names unless useful."
             ),
         )
@@ -303,32 +248,109 @@ def _render_tool_results_answer(tool_results: list[dict[str, object]]) -> str:
         if not ok:
             lines.append(f"{name} 执行失败：{result.get('error')}")
             continue
-        if name == "file.read" and isinstance(content, dict):
+        if name == "Read" and isinstance(content, dict):
             text = str(content.get("content", ""))
             path = content.get("path", "")
             lines.append(f"{path}\n{text[:4000]}")
-        elif name == "grep.search" and isinstance(content, dict):
+        elif name == "Glob" and isinstance(content, dict):
+            matches = content.get("matches", [])
+            lines.append(f"{content.get('path')} 下匹配 {content.get('pattern')} 的条目数：{content.get('count', 0)}")
+            if isinstance(matches, list):
+                for entry in matches[:100]:
+                    if isinstance(entry, dict):
+                        marker = "/" if entry.get("type") == "directory" else ""
+                        lines.append(f"- {entry.get('relative_path') or entry.get('name')}{marker}")
+        elif name == "Grep" and isinstance(content, dict):
             matches = content.get("matches", [])
             lines.append(f"找到 {content.get('count', 0)} 条匹配：")
             if isinstance(matches, list):
                 for match in matches[:20]:
                     if isinstance(match, dict):
                         lines.append(f"{match.get('path')}:{match.get('line_number')}: {match.get('line')}")
-        elif name == "file.write" and isinstance(content, dict):
+        elif name == "Write" and isinstance(content, dict):
             lines.append(f"已写入 {content.get('path')}，字节数：{content.get('bytes_written')}")
+        elif name == "Edit" and isinstance(content, dict):
+            lines.append(f"已修改 {content.get('path')}，替换次数：{content.get('replacements')}")
         else:
             lines.append(json.dumps(result, ensure_ascii=False))
     return "\n".join(lines)
 
 
-def _trim_chat_history(messages: list[ChatMessage], history_limit: int) -> None:
-    if history_limit < 2:
-        return
-    system_messages = [message for message in messages if message.role == "system"]
-    conversation = [message for message in messages if message.role != "system"]
-    del messages[:]
-    messages.extend(system_messages[:1])
-    messages.extend(conversation[-history_limit:])
+def _is_exit_command(content: str) -> bool:
+    return content.strip().lower() in {"exit", "quit", "/exit", "/quit"}
+
+
+def _handle_runtime_slash_command(content: str, history: list[tuple[str, str]], runtime: AgentRuntime) -> bool:
+    stripped = content.strip()
+    if not stripped.startswith("/"):
+        return False
+
+    command = stripped.split(maxsplit=1)[0].lower()
+    if command == "/help":
+        _print_runtime_slash_help()
+        return True
+    if command == "/clear":
+        history.clear()
+        console.print("Runtime chat history cleared.")
+        return True
+    if command == "/tools":
+        console.print(_render_available_tools(runtime))
+        return True
+    if command in {"/exit", "/quit"}:
+        raise typer.Exit()
+
+    console.print(f"Unknown command: {command}")
+    console.print("Type /help to see available commands.")
+    return True
+
+
+def _print_runtime_slash_help() -> None:
+    console.print("Available runtime-chat commands:")
+    console.print("/help  Show available commands.")
+    console.print("/clear Clear local runtime-chat response history.")
+    console.print("/tools Show available Runtime tools.")
+    console.print("/exit  Exit runtime-chat.")
+    console.print("/quit  Exit runtime-chat.")
+
+
+def _is_tool_list_request(content: str) -> bool:
+    normalized = content.strip().lower()
+    if not normalized:
+        return False
+    tool_keywords = [
+        "你有什么工具",
+        "你有哪些工具",
+        "有什么工具",
+        "有哪些工具",
+        "可用工具",
+        "工具列表",
+        "支持什么工具",
+        "能用什么工具",
+        "what tools",
+        "available tools",
+        "list tools",
+    ]
+    return any(keyword in normalized for keyword in tool_keywords)
+
+
+def _render_available_tools(runtime: AgentRuntime) -> str:
+    tools = _runtime_tool_schemas(runtime)
+    if not tools:
+        return "当前 Runtime 没有暴露可用工具信息。"
+
+    lines = ["当前 Runtime 可用工具："]
+    for tool in tools:
+        mode = "只读" if tool.read_only else "可写"
+        approval = "，需要审批" if tool.permission.approval_required else ""
+        lines.append(f"- {tool.name} [{mode}, risk={tool.risk}{approval}]：{tool.description}")
+    return "\n".join(lines)
+
+
+def _runtime_tool_schemas(runtime: AgentRuntime) -> list[ToolSchema]:
+    planner = getattr(runtime, "planner", None)
+    context = getattr(planner, "context", None)
+    tools = getattr(context, "tools", [])
+    return [tool for tool in tools if isinstance(tool, ToolSchema)]
 
 
 def _strip_reasoning_blocks(content: str) -> str:

@@ -9,7 +9,7 @@ def test_context_assembler_injects_tool_schema_and_workspace() -> None:
         name="coding",
         description="Plan code changes.",
         triggers=["开发"],
-        suggested_tools=["file.read"],
+        suggested_tools=["Read"],
     )
     assembler = ContextAssembler(
         tools=[ReadFileTool().schema],
@@ -26,10 +26,25 @@ def test_context_assembler_injects_tool_schema_and_workspace() -> None:
     messages = assembler.planner_messages(request)
 
     assert [message.role for message in messages] == ["system", "system", "user"]
-    assert "file.read" in messages[1].content
+    assert "Read" in messages[1].content
     assert "coding" in messages[1].content
     assert "D:/code/ai-agent" in messages[1].content
     assert messages[-1].content == "Read README.md"
+
+
+def test_context_assembler_injects_session_context() -> None:
+    assembler = ContextAssembler()
+    request = UserRequest(
+        session_id="session-1",
+        user_id="user-1",
+        workspace_id="workspace-1",
+        content="Continue",
+    )
+
+    messages = assembler.planner_messages(request, session_context="Previous plan goal: Read README.md")
+
+    assert "Previous plan goal: Read README.md" in messages[-1].content
+    assert "Current user request:\nContinue" in messages[-1].content
 
 
 def test_token_budget_truncates_text() -> None:

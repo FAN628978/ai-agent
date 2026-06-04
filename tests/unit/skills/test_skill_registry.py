@@ -9,7 +9,7 @@ class ExampleSkill(BaseSkill):
         name="example",
         description="Example skill.",
         triggers=["sample", "示例"],
-        suggested_tools=["file.read"],
+        suggested_tools=["Read"],
         prompt_hints=["Use this skill for examples."],
     )
 
@@ -20,7 +20,7 @@ def test_skill_registry_registers_and_lists_schemas() -> None:
     registry.register(ExampleSkill())
 
     assert registry.get("example").name == "example"
-    assert registry.schemas()[0].suggested_tools == ["file.read"]
+    assert registry.schemas()[0].suggested_tools == ["Read"]
 
 
 def test_skill_registry_rejects_duplicates() -> None:

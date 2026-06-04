@@ -219,7 +219,7 @@ uv run pytest
 - `agent-system chat` 默认隐藏 `<think>...</think>` 内容，可用 `--show-reasoning` 显示。
 - `agent-system runtime-chat` 每轮都会经过 `AgentRuntime`，再把事件和工具结果整理成 Assistant 回复。
 - `--no-llm` 可切换到规则 Planner，方便无本地模型时测试。
-- 当前 Executor 已能执行明确建议的内置工具；没有工具建议的步骤仍会走 mock 执行。
+- 当前 Executor 已能执行明确建议的内置工具；没有可执行工具的步骤不会被模拟完成，会进入需要补充信息的失败路径。
 
 验证结果：
 
@@ -312,18 +312,22 @@ AGENT_SYSTEM_RUN_LOCAL_LLM_TESTS=1 uv run pytest tests/integration
 - `ToolRouter`
 - `Workspace`
 - `ToolContext`
-- `file.read`
-- `file.write`
-- `grep.search`
-- `shell.run`
+- `Read`
+- `Write`
+- `Edit`
+- `Grep`
+- `Glob`
+- `Bash`
 
 影响范围：
 
 - 工具可以注册、查询和调用。
 - 工具统一返回 `ToolResult`。
 - 文件工具限制在 workspace 内，阻止路径越界。
-- `grep.search` 支持正则搜索文本文件。
-- `shell.run` 默认禁用，显式启用后支持超时、stdout、stderr 和 returncode。
+- `Edit` 支持替换已有文件中的文本。
+- `Grep` 支持正则搜索文本文件。
+- `Glob` 支持按路径模式查找文件或目录。
+- `Bash` 默认禁用，显式启用后支持超时、stdout、stderr 和 returncode。
 - 当前工具系统已接入 `Executor` 的保守路径；只有 Step 明确列出内置工具名时才会调用工具。
 
 验证结果：
@@ -506,7 +510,7 @@ configs/default.yaml
 - 将 `permissions.default_shell` 和 ToolPermission 检查接入 `ToolRouter`。
 - 高风险工具返回审批需求事件，而不是直接执行。
 - 增加工具调用审计记录，包括 call_id、tool name、arguments 摘要、结果状态。
-- 保持 `shell.run` 默认禁用，启用需显式配置。
+- 保持 `Bash` 默认禁用，启用需显式配置。
 
 验收标准：
 

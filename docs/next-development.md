@@ -184,7 +184,7 @@ Conversation summary:
 - 将 `permissions.default_shell` 和 `ToolPermission` 检查接入 `ToolRouter`。
 - 高风险工具返回审批需求事件，而不是直接执行。
 - 增加工具调用审计记录，包括 call_id、tool name、arguments 摘要、结果状态。
-- 保持 `shell.run` 默认禁用，启用需显式配置。
+- 保持 `Bash` 默认禁用，启用需显式配置。
 
 ### 3. LLM 驱动的 Reflector / Executor
 

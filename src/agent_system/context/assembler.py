@@ -25,7 +25,7 @@ class ContextAssembler:
         self.workspace = workspace
         self.max_chars = max_chars
 
-    def planner_messages(self, request: UserRequest) -> list[ChatMessage]:
+    def planner_messages(self, request: UserRequest, session_context: str | None = None) -> list[ChatMessage]:
         budget = TokenBudget(total=self.max_chars)
         tool_schemas = json.dumps(
             [tool.model_dump(mode="json") for tool in self.tools],
@@ -47,5 +47,10 @@ class ContextAssembler:
         return [
             ChatMessage(role="system", content=system),
             ChatMessage(role="system", content=planner),
-            ChatMessage(role="user", content=request.content),
+            ChatMessage(role="user", content=self._user_content(request, session_context)),
         ]
+
+    def _user_content(self, request: UserRequest, session_context: str | None) -> str:
+        if not session_context:
+            return request.content
+        return f"{session_context}\n\nCurrent user request:\n{request.content}"

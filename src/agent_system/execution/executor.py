@@ -9,6 +9,9 @@ from agent_system.models import AgentState, Plan, Step, ToolCall, ToolResult
 from agent_system.tools import ToolRouter
 
 
+PATH_BOUNDARY_CHARS = ".,;:()[]{}\"'`，。；：（）【】{}"
+
+
 class StepResult(BaseModel):
     step_id: str
     ok: bool
@@ -57,19 +60,10 @@ class Executor:
             step_results.append(
                 StepResult(
                     step_id=step.id,
-                    ok=True,
-                    summary=f"Completed step: {step.title}",
+                    ok=False,
+                    summary=f"No executable tool call for step: {step.title}",
                 )
             )
-            tool_results.append(
-                ToolResult(
-                    call_id=f"{step.id}:mock",
-                    name="runtime.mock_step",
-                    ok=True,
-                    content={"step_id": step.id, "objective": step.objective},
-                )
-            )
-            state.completed_steps.add(step.id)
 
         return ExecutionResult(step_results=step_results, tool_results=tool_results)
 
@@ -84,7 +78,7 @@ class Executor:
             return results
 
         for tool_name in step.suggested_tools:
-            if tool_name not in {"file.read", "file.write", "grep.search", "shell.run"}:
+            if tool_name not in {"Read", "Write", "Edit", "Grep", "Glob", "Bash"}:
                 continue
             call = ToolCall(
                 id=f"{step.id}:{tool_name}",
@@ -99,19 +93,30 @@ class Executor:
         if json_args is not None:
             return json_args
 
-        if tool_name == "file.read":
+        if tool_name == "Read":
             return {"path": self._extract_path(step.objective)}
-        if tool_name == "file.write":
+        if tool_name == "Write":
             return {
                 "path": self._extract_path(step.objective),
                 "content": self._extract_value(step.objective, "content", default=""),
             }
-        if tool_name == "grep.search":
+        if tool_name == "Edit":
+            return {
+                "path": self._extract_path(step.objective),
+                "old_string": self._extract_value(step.objective, "old_string", default=""),
+                "new_string": self._extract_value(step.objective, "new_string", default=""),
+            }
+        if tool_name == "Grep":
             return {
                 "pattern": self._extract_value(step.objective, "pattern", default=step.objective),
                 "path": self._extract_value(step.objective, "path", default="."),
             }
-        if tool_name == "shell.run":
+        if tool_name == "Glob":
+            return {
+                "pattern": self._extract_value(step.objective, "pattern", default="*"),
+                "path": self._extract_value(step.objective, "path", default="."),
+            }
+        if tool_name == "Bash":
             return {"command": step.objective}
         return {}
 
@@ -135,7 +140,7 @@ class Executor:
             return quoted.group(1)
 
         for token in objective.split():
-            candidate = token.strip(".,;:()[]{}")
+            candidate = token.strip(PATH_BOUNDARY_CHARS)
             if "/" in candidate or "\\" in candidate or "." in candidate:
                 return candidate
         return objective
@@ -143,7 +148,7 @@ class Executor:
     def _extract_value(self, objective: str, key: str, default: str) -> str:
         match = re.search(rf"{re.escape(key)}=([^\s]+)", objective)
         if match:
-            return match.group(1).strip("\"'")
+            return match.group(1).strip(PATH_BOUNDARY_CHARS)
         return default
 
     def _tool_step_summary(self, step: Step, tool_results: list[ToolResult]) -> str:

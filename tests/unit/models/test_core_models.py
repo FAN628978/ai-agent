@@ -51,7 +51,7 @@ def test_step_tool_calls_roundtrip() -> None:
         tool_calls=[
             ToolCall(
                 id="call-1",
-                name="file.read",
+                name="Read",
                 arguments={"path": "README.md"},
             )
         ],
@@ -60,12 +60,12 @@ def test_step_tool_calls_roundtrip() -> None:
     dumped = step.model_dump(mode="json")
     loaded = Step.model_validate(dumped)
 
-    assert dumped["tool_calls"][0]["name"] == "file.read"
+    assert dumped["tool_calls"][0]["name"] == "Read"
     assert loaded.tool_calls[0].arguments == {"path": "README.md"}
 
 
 def test_tool_call_and_result_defaults() -> None:
-    call = ToolCall(id="call-1", name="file.read", arguments={"path": "README.md"})
+    call = ToolCall(id="call-1", name="Read", arguments={"path": "README.md"})
     result = ToolResult(
         call_id=call.id,
         name=call.name,

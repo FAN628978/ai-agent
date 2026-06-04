@@ -156,7 +156,7 @@ Reflection: 对结果的检查和下一步决策
 ```json
 {
   "event": "tool_call.completed",
-  "tool": "shell.run",
+  "tool": "Bash",
   "status": "success",
   "duration_ms": 1280,
   "summary": "pytest 通过 42 个测试"
@@ -1160,7 +1160,7 @@ run.completed
 ```python
 class ReadFileTool(BaseTool):
     schema = ToolSchema(
-        name="file.read",
+        name="Read",
         description="Read a UTF-8 text file from the current workspace.",
         input_schema={
             "type": "object",
@@ -1194,7 +1194,7 @@ class ReadFileTool(BaseTool):
 ```python
 class ShellTool(BaseTool):
     schema = ToolSchema(
-        name="shell.run",
+        name="Bash",
         description="Run an approved shell command in a sandboxed workspace.",
         input_schema={
             "type": "object",

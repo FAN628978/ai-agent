@@ -8,6 +8,9 @@ from agent_system.llm import ChatMessage
 from agent_system.models import Plan, RunMode, Step, ToolCall, UserRequest
 
 
+PATH_BOUNDARY_CHARS = ".,;:()[]{}\"'`，。；：（）【】{}"
+
+
 class PlannerLLMClient(Protocol):
     async def chat(
         self,
@@ -31,12 +34,12 @@ class PlannerAgent:
         self.max_tokens = max_tokens
         self.temperature = temperature
 
-    async def make_plan(self, request: UserRequest) -> Plan:
+    async def make_plan(self, request: UserRequest, session_context: str | None = None) -> Plan:
         if self.llm_client is None:
             return self._make_rule_plan(request)
 
         try:
-            return await self._make_llm_plan(request)
+            return await self._make_llm_plan(request, session_context=session_context)
         except Exception as exc:
             plan = self._make_rule_plan(request)
             plan.assumptions = ["LLM planner failed; using the built-in rule-based planner."]
@@ -63,27 +66,71 @@ class PlannerAgent:
 
     def _suggest_tools(self, content: str) -> list[str]:
         normalized = content.lower()
-        if any(keyword in normalized for keyword in ["grep", "search", "find", "搜索", "查找"]):
-            return ["grep.search"]
+        if any(
+            keyword in normalized
+            for keyword in [
+                "glob",
+                "list",
+                "ls",
+                "tree",
+                "directory",
+                "folder",
+                "inspect the project",
+                "inspect project",
+                "read the project",
+                "read project",
+                "list the project",
+                "list project",
+                "project files",
+                "project structure",
+                "find file",
+                "find files",
+                "目录",
+                "当前目录",
+                "项目",
+                "结构",
+                "找文件",
+            ]
+        ):
+            return ["Glob"]
+        if any(keyword in normalized for keyword in ["grep", "search", "搜索", "查找"]):
+            return ["Grep"]
+        if any(keyword in normalized for keyword in ["edit", "replace", "修改", "替换"]):
+            return ["Edit"]
+        if any(keyword in normalized for keyword in ["write", "create", "overwrite", "新建", "写入", "覆盖"]):
+            return ["Write"]
+        if any(keyword in normalized for keyword in ["bash", "shell", "command", "执行命令"]):
+            return ["Bash"]
         if any(keyword in normalized for keyword in ["read", "open", "show", "cat", "读取", "打开", "查看"]):
-            return ["file.read"]
+            return ["Read"]
         return []
 
     def _make_rule_tool_calls(self, content: str) -> list[ToolCall]:
         suggested_tools = self._suggest_tools(content)
-        if suggested_tools == ["file.read"]:
+        if suggested_tools == ["Glob"]:
             return [
                 ToolCall(
-                    id="step-1:file.read",
-                    name="file.read",
-                    arguments={"path": self._extract_path(content)},
+                    id="step-1:Glob",
+                    name="Glob",
+                    arguments={
+                        "pattern": self._extract_value(content, "pattern", default="*"),
+                        "path": self._extract_value(content, "path", default="."),
+                    },
                 )
             ]
-        if suggested_tools == ["grep.search"]:
+        if suggested_tools == ["Read"]:
             return [
                 ToolCall(
-                    id="step-1:grep.search",
-                    name="grep.search",
+                    id="step-1:Read",
+                    name="Read",
+                    arguments={"path": self._extract_path(content, default=content)},
+                )
+            ]
+        if suggested_tools == ["Grep"]:
+            return [
+                ToolCall(
+                    id="step-1:Grep",
+                    name="Grep",
                     arguments={
                         "pattern": self._extract_value(content, "pattern", default=content),
                         "path": self._extract_value(content, "path", default="."),
@@ -92,10 +139,10 @@ class PlannerAgent:
             ]
         return []
 
-    async def _make_llm_plan(self, request: UserRequest) -> Plan:
+    async def _make_llm_plan(self, request: UserRequest, session_context: str | None = None) -> Plan:
         assert self.llm_client is not None
         response = await self.llm_client.chat(
-            self.context.planner_messages(request),
+            self.context.planner_messages(request, session_context=session_context),
             max_tokens=self.max_tokens,
             temperature=self.temperature,
         )
@@ -103,7 +150,8 @@ class PlannerAgent:
         data = self._extract_json_object(content)
         data = self._normalize_plan_data(data)
         data["mode"] = request.mode
-        return Plan.model_validate(data)
+        plan = Plan.model_validate(data)
+        return self._add_rule_tool_hints_if_missing(plan, request)
 
     def _extract_json_object(self, content: str) -> dict[str, object]:
         start = content.find("{")
@@ -189,20 +237,49 @@ class PlannerAgent:
             )
         return normalized_calls
 
-    def _extract_path(self, content: str) -> str:
+    def _add_rule_tool_hints_if_missing(self, plan: Plan, request: UserRequest) -> Plan:
+        if any(step.tool_calls or step.suggested_tools for step in plan.steps):
+            return plan
+        rule_plan = self._make_rule_plan(request)
+        if not rule_plan.steps:
+            return plan
+        rule_step = rule_plan.steps[0]
+        if not rule_step.tool_calls and not rule_step.suggested_tools:
+            return plan
+        if not self._should_add_rule_tool_hints(request.content, rule_step.suggested_tools):
+            return plan
+        if not plan.steps:
+            return rule_plan
+
+        updated = plan.model_copy(deep=True)
+        updated.steps[0].suggested_tools = rule_step.suggested_tools
+        updated.steps[0].tool_calls = rule_step.tool_calls
+        return updated
+
+    def _should_add_rule_tool_hints(self, content: str, suggested_tools: list[str]) -> bool:
+        if not suggested_tools:
+            return False
+        normalized = content.lower()
+        if suggested_tools[0] in {"Glob", "Read", "Grep"}:
+            return True
+        if suggested_tools[0] == "Write":
+            return any(keyword in normalized for keyword in ["write", "overwrite", "写入", "覆盖"])
+        return False
+
+    def _extract_path(self, content: str, default: str) -> str:
         explicit = self._extract_value(content, "path", default="")
         if explicit:
             return explicit
         for token in content.split():
-            candidate = token.strip(".,;:()[]{}\"'")
+            candidate = token.strip(PATH_BOUNDARY_CHARS)
             if "/" in candidate or "\\" in candidate or "." in candidate:
                 return candidate
-        return content
+        return default
 
     def _extract_value(self, content: str, key: str, default: str) -> str:
         import re
 
         match = re.search(rf"{re.escape(key)}=([^\s]+)", content)
         if match:
-            return match.group(1).strip("\"'")
+            return match.group(1).strip(PATH_BOUNDARY_CHARS)
         return default
