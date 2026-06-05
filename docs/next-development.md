@@ -1,5 +1,7 @@
 # 下一步开发建议：Runtime 多轮任务状态
 
+> 状态更新：Runtime 多轮 session 基础能力已经实现，包括 `SessionRecord`、`InMemorySessionStore`、Runtime 写回 session、Context 注入 session summary，以及 `runtime-chat` 使用固定 `session_id` 调用 Runtime。后续重点应转向审批后的继续执行、LLM Reflector 和持久化 session。
+
 ## 目标
 
 让 Runtime 对话具备真正的多轮任务状态。

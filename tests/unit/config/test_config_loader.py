@@ -13,6 +13,10 @@ def test_load_default_config_includes_local_minimax() -> None:
     assert config.model.planner == "MiniMax-M2.5"
     assert config.model.executor == "MiniMax-M2.5"
     assert config.model.reflector == "MiniMax-M2.5"
+    assert config.permissions.default_shell == "allow"
+    assert config.permissions.workspace_write == "allow"
+    assert config.permissions.network == "allow"
+    assert config.permissions.destructive_commands == "allow"
     assert config.logging.enabled is True
     assert config.logging.path == "logs/agent-system.jsonl"
     assert config.logging.level == "info"

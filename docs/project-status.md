@@ -166,7 +166,7 @@ uv run pytest
 已实现：
 
 - `AgentRuntime`
-- 规则版 `PlannerAgent`
+- LLM 驱动 `PlannerAgent`
 - 顺序执行版 `Executor`
 - 简化版 `Reflector`
 - 内存版 `InMemoryCheckpointStore`
@@ -206,7 +206,6 @@ uv run pytest
 常用参数：
 
 - `--config configs/default.yaml`
-- `--no-llm`
 - `--json`
 - `--user-id`
 - `--workspace-id`
@@ -218,8 +217,7 @@ uv run pytest
 - `agent-system chat` 会直接调用 `model.chat`，保留当前会话上下文历史，并只输出 Assistant 回复。
 - `agent-system chat` 默认隐藏 `<think>...</think>` 内容，可用 `--show-reasoning` 显示。
 - `agent-system runtime-chat` 每轮都会经过 `AgentRuntime`，再把事件和工具结果整理成 Assistant 回复。
-- `--no-llm` 可切换到规则 Planner，方便无本地模型时测试。
-- 当前 Executor 已能执行明确建议的内置工具；没有可执行工具的步骤不会被模拟完成，会进入需要补充信息的失败路径。
+- 当前 Executor 已能执行 LLM Planner 产出的结构化 `tool_calls`；没有可执行工具的步骤不会被模拟完成，会进入需要补充信息的失败路径。
 
 验证结果：
 
@@ -273,7 +271,7 @@ MiniMax-M2.5
 - 新增一个最小 OpenAI-compatible LLM client。
 - `configs/default.yaml` 默认指向 `http://localhost:8500` 和 `MiniMax-M2.5`。
 - `create_runtime_from_config()` 会按配置创建带 LLM client 的 `PlannerAgent`。
-- `PlannerAgent` 会优先使用 LLM 生成 `Plan`，LLM 输出不可解析时回退到规则计划。
+- `PlannerAgent` 使用 LLM 生成 `Plan` 和结构化 `tool_calls`，不再提供规则 Planner 模式。
 - 默认 `uv run pytest` 会跳过真实本地服务测试，避免未启动本地模型时失败。
 
 验证结果：
@@ -445,7 +443,6 @@ uv run pytest
 影响范围：
 
 - Runtime 模式现在可以像对话一样使用。
-- `runtime-chat --no-llm` 会直接展示 Runtime 工具执行结果。
 - 默认 `runtime-chat` 会先跑 Runtime，再用 `model.chat` 合成自然语言回复。
 - `--show-events` 可用于调试完整 Runtime 事件流。
 
@@ -501,23 +498,27 @@ configs/default.yaml
 
 ## 下一步任务
 
-下一步建议继续完善权限策略和工具调用审批。
+Runtime 多轮 session 基础能力、`ToolRouter` 权限策略、工具调用审计 metadata，以及工具审批需求事件已经接入。
 
-如果优先关注 Agent 主体能力，见 `docs/next-development.md`，建议先做 Runtime 多轮任务状态。
+下一步建议继续完善审批后的继续执行能力：
 
-建议实现：
+- 保存待审批的 `ToolCall` 和关联 `task_id`。
+- 增加用户批准 / 拒绝入口。
+- 批准后带 `approved=True` 重新执行对应工具调用。
+- 拒绝后写入结构化拒绝结果，并让 Runtime 给出需要用户输入或替代方案。
 
-- 将 `permissions.default_shell` 和 ToolPermission 检查接入 `ToolRouter`。
-- 高风险工具返回审批需求事件，而不是直接执行。
-- 增加工具调用审计记录，包括 call_id、tool name、arguments 摘要、结果状态。
-- 保持 `Bash` 默认禁用，启用需显式配置。
+如果优先关注 Agent 主体能力，建议下一步接入 LLM 驱动的 Reflector：
+
+- Reflector 使用 LLM 判断工具结果是否满足目标。
+- LLM 输出不可解析时保留当前规则 Reflector 降级。
+- 增加结果不足、需要追问、任务完成三类测试。
 
 验收标准：
 
-- 低风险工具可自动执行。
-- 高风险工具不会无审批执行。
-- 工具调用失败和拒绝都有结构化结果。
-- Shell 默认禁用，启用需显式配置。
+- 未审批的高风险工具不会执行。
+- 审批需求以 `run.waiting_for_tool_approval` 事件输出。
+- CLI 能展示工具名、原因和参数摘要。
+- 批准 / 拒绝结果都有结构化记录。
 - `uv run pytest` 通过。
 
 ## 暂不处理事项

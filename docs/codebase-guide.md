@@ -239,20 +239,7 @@ logs/agent-system.jsonl
 
 位置：`agents/planner.py`
 
-`PlannerAgent` 支持两种路径：
-
-1. 没有 LLM client：使用规则 Planner。
-2. 有 LLM client：调用 LLM 生成 JSON plan，失败时回退到规则 Planner。
-
-规则 Planner 的能力很小：
-
-- 请求中包含 `read/open/show/cat/读取/打开/查看` 时建议 `Read`。
-- 请求中包含 `write/create/overwrite/新建/写入/覆盖` 时建议 `Write`。
-- 请求中包含 `edit/replace/修改/替换` 时建议 `Edit`。
-- 请求中包含 `grep/search/搜索/查找` 时建议 `Grep`。
-- 请求中包含 `list/tree/目录/当前目录/项目/结构/找文件` 时建议 `Glob`。
-- 请求中明确要求执行命令时建议 `Bash`。
-- 对明显文件路径做简单提取，并尽量生成结构化 `ToolCall`。
+`PlannerAgent` 只支持 LLM Planner 路径。没有 LLM client 时会直接报错，不再提供规则 Planner 兜底。
 
 LLM Planner 的流程：
 
@@ -265,9 +252,10 @@ LLM Planner 的流程：
    - `risks`
    - `steps`
    - `tool_calls`
-5. 用 Pydantic 校验成 `Plan`。
+5. 如果 plan 没有任何 `suggested_tools` 或 `tool_calls`，会要求 LLM 基于工具 schema 重新判断是否需要工具。
+6. 用 Pydantic 校验成 `Plan`。
 
-如果 LLM 输出不是 JSON 或字段不可用，会回退到规则计划，并把异常写入 `risks`。
+如果 LLM 输出不是 JSON 或字段不可用，会直接暴露错误，不再回退到规则计划。
 
 ## Executor
 
@@ -510,7 +498,6 @@ CLI 使用 Typer 和 Rich。
 
 - `--config`
 - `--json`
-- `--no-llm`
 - `--show-tool-results`
 - `--user-id`
 - `--workspace-id`
@@ -530,7 +517,7 @@ CLI 使用 Typer 和 Rich。
 1. 先处理 runtime-chat 斜杠命令。
 2. 普通输入会调用 `AgentRuntime`。
 3. 根据 Runtime events 生成 fallback answer。
-4. 如果启用 LLM，再用 Chat LLM 合成最终回复。
+4. 对成功工具结果，用 Chat LLM 合成最终回复。
 
 支持的斜杠命令：
 

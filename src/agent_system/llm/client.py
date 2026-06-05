@@ -17,6 +17,7 @@ class ChatMessage(BaseModel):
 class ChatResponse(BaseModel):
     model: str
     content: str
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -43,6 +44,7 @@ class OpenAICompatibleClient:
         *,
         max_tokens: int = 512,
         temperature: float = 0.2,
+        tools: list[dict[str, Any]] | None = None,
     ) -> ChatResponse:
         request_body = {
             "model": self.model,
@@ -50,6 +52,8 @@ class OpenAICompatibleClient:
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if tools:
+            request_body["tools"] = tools
         payload = await asyncio.to_thread(
             self._request,
             "POST",
@@ -57,9 +61,11 @@ class OpenAICompatibleClient:
             request_body,
         )
         choice = payload["choices"][0]
+        message = choice["message"]
         return ChatResponse(
             model=payload.get("model", self.model),
-            content=choice["message"]["content"],
+            content=message.get("content") or "",
+            tool_calls=message.get("tool_calls") or [],
             raw=payload,
         )
 

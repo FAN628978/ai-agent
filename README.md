@@ -73,11 +73,7 @@ uv run agent-system run "帮我分析当前项目"
 uv run agent-system runtime-chat
 ```
 
-Runtime 对话模式每轮都会先经过 `AgentRuntime`，再把执行结果整理成 Assistant 回复。无模型调试可用：
-
-```bash
-uv run agent-system runtime-chat --no-llm
-```
+Runtime 对话模式每轮都会先经过 `AgentRuntime`，再把执行结果整理成 Assistant 回复。
 
 Runtime 对话模式支持斜杠命令：
 
@@ -85,12 +81,6 @@ Runtime 对话模式支持斜杠命令：
 - `/clear`：清空当前 CLI 本地回复历史。
 - `/tools`：查看当前 Runtime 可用工具。
 - `/exit`、`/quit`：退出对话。
-
-使用规则 Planner，不调用本地模型：
-
-```bash
-uv run agent-system plan "Inspect project" --no-llm
-```
 
 输出 JSON Lines：
 
@@ -101,10 +91,10 @@ uv run agent-system plan "Inspect project" --json
 显示工具结果摘要：
 
 ```bash
-uv run agent-system run "Read README.md" --no-llm --show-tool-results
+uv run agent-system run "Read README.md" --show-tool-results
 ```
 
-注意：当前 CLI 已能通过 Runtime 对话、生成计划，并能执行明确建议的低风险工具。没有可执行工具的步骤不会被模拟完成，会提示需要补充信息。
+注意：当前 CLI 依赖配置中的 OpenAI-compatible LLM。Planner 由 LLM 基于工具 schema 生成结构化 `tool_calls`；没有可执行工具的步骤不会被模拟完成，会提示需要补充信息。
 
 ## 本地 MiniMax 测试
 

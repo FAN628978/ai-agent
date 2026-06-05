@@ -55,6 +55,8 @@ class Executor:
                 )
                 if ok:
                     state.completed_steps.add(step.id)
+                if _has_approval_required(step_tool_results):
+                    break
                 continue
 
             step_results.append(
@@ -78,7 +80,9 @@ class Executor:
             return results
 
         for tool_name in step.suggested_tools:
-            if tool_name not in {"Read", "Write", "Edit", "Grep", "Glob", "Bash"}:
+            try:
+                self.tool_router.registry.get(tool_name)
+            except KeyError:
                 continue
             call = ToolCall(
                 id=f"{step.id}:{tool_name}",
@@ -152,7 +156,20 @@ class Executor:
         return default
 
     def _tool_step_summary(self, step: Step, tool_results: list[ToolResult]) -> str:
+        if _has_approval_required(tool_results):
+            return "Step is waiting for tool approval."
         failed = [result.name for result in tool_results if not result.ok]
         if failed:
             return f"Step failed with tool errors: {', '.join(failed)}"
         return f"Completed step with tools: {', '.join(result.name for result in tool_results)}"
+
+
+def _has_approval_required(tool_results: list[ToolResult]) -> bool:
+    return any(_is_approval_required(result) for result in tool_results)
+
+
+def _is_approval_required(result: ToolResult) -> bool:
+    if isinstance(result.content, dict) and result.content.get("approval_required") is True:
+        return True
+    audit = result.metadata.get("audit", {})
+    return isinstance(audit, dict) and audit.get("status") == "approval_required"

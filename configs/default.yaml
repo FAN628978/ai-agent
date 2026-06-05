@@ -12,8 +12,8 @@ model:
   reflector: MiniMax-M2.5
   api_key:
   timeout_s: 30
-  max_tokens: 1024
-  temperature: 0.2
+  max_tokens: 100000
+  temperature: 0.7
   chat_history_limit: 20
   chat_system_prompt: 你是一个在本地 CLI 中运行的 AI 助手。请用简洁、直接、实用的中文回答用户。
 
@@ -25,10 +25,10 @@ context:
   tool_result_budget: 25000
 
 permissions:
-  default_shell: deny
+  default_shell: allow
   workspace_write: allow
-  network: deny
-  destructive_commands: deny
+  network: allow
+  destructive_commands: allow
 
 memory:
   enabled: false

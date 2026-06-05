@@ -47,3 +47,48 @@ def test_chat_posts_messages_and_parses_content() -> None:
     assert response.model == "MiniMax-M2.5"
     assert response.content == "OK"
     assert response.raw["choices"][0]["message"]["content"] == "OK"
+
+
+def test_chat_posts_tools_and_parses_native_tool_calls() -> None:
+    client = OpenAICompatibleClient(base_url="http://localhost:8500/", model="MiniMax-M2.5")
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "Read",
+                "description": "Read a file",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+            },
+        }
+    ]
+    tool_calls = [
+        {
+            "id": "call-1",
+            "type": "function",
+            "function": {"name": "Read", "arguments": '{"path":"README.md"}'},
+        }
+    ]
+
+    def fake_request(method: str, path: str, body: dict | None = None) -> dict:
+        assert method == "POST"
+        assert path == "/v1/chat/completions"
+        assert body is not None
+        assert body["tools"] == tools
+        return {
+            "model": "MiniMax-M2.5",
+            "choices": [{"message": {"content": None, "tool_calls": tool_calls}}],
+        }
+
+    client._request = fake_request  # type: ignore[method-assign]
+
+    response = asyncio.run(
+        client.chat(
+            [ChatMessage(role="user", content="Read README.md")],
+            max_tokens=16,
+            temperature=0,
+            tools=tools,
+        )
+    )
+
+    assert response.content == ""
+    assert response.tool_calls == tool_calls

@@ -37,10 +37,10 @@ class ContextConfig(BaseModel):
 
 
 class PermissionsConfig(BaseModel):
-    default_shell: Literal["allow", "ask", "deny"] = "deny"
+    default_shell: Literal["allow", "ask", "deny"] = "allow"
     workspace_write: Literal["allow", "ask", "deny"] = "allow"
-    network: Literal["allow", "ask", "deny"] = "deny"
-    destructive_commands: Literal["allow", "ask", "deny"] = "deny"
+    network: Literal["allow", "ask", "deny"] = "allow"
+    destructive_commands: Literal["allow", "ask", "deny"] = "allow"
 
 
 class MemoryConfig(BaseModel):

@@ -11,7 +11,9 @@ MAX_RECENT_EVENTS = 50
 MAX_RECENT_TOOL_RESULTS = 20
 MAX_CONTEXT_CHARS = 4000
 MAX_SUMMARY_CHARS = 2000
-MAX_TOOL_DETAIL_CHARS = 300
+MAX_TOOL_DETAIL_CHARS = 1200
+MAX_TOOL_MATCHES = 50
+MAX_READ_CONTENT_CHARS = 800
 
 
 class SessionRecord(BaseModel):
@@ -67,6 +69,10 @@ class InMemorySessionStore:
 def _assistant_summary(events: list[AgentEvent], plan: Plan | None) -> str:
     if any(event.type == "run.waiting_for_approval" for event in events):
         return f"Created a plan for: {plan.goal if plan else 'the request'}"
+    tool_approval = next((event for event in events if event.type == "run.waiting_for_tool_approval"), None)
+    if tool_approval is not None:
+        approvals = tool_approval.data.get("tool_approvals", [])
+        return f"Waiting for tool approval: {approvals}"
     if any(event.type == "run.completed" for event in events):
         return f"Completed: {plan.goal if plan else 'the request'}"
     needs_input = next((event for event in events if event.type == "run.needs_user_input"), None)
@@ -89,8 +95,72 @@ def _plan_summary(plan: Plan) -> str:
 
 def _tool_result_summary(result: ToolResult) -> str:
     status = "ok" if result.ok else "failed"
-    detail = result.error or _json_summary(result.content)
+    detail = result.error or _tool_content_summary(result)
     return f"{result.name} call_id={result.call_id} status={status} detail={detail}"
+
+
+def _tool_content_summary(result: ToolResult) -> str:
+    if not isinstance(result.content, dict):
+        return _json_summary(result.content)
+    if result.name == "Glob":
+        return _glob_content_summary(result.content)
+    if result.name == "Read":
+        return _read_content_summary(result.content)
+    if result.name == "Grep":
+        return _grep_content_summary(result.content)
+    return _json_summary(result.content)
+
+
+def _glob_content_summary(content: dict[str, object]) -> str:
+    matches = content.get("matches", [])
+    paths: list[str] = []
+    if isinstance(matches, list):
+        for entry in matches[:MAX_TOOL_MATCHES]:
+            if isinstance(entry, dict):
+                path = entry.get("relative_path") or entry.get("path") or entry.get("name")
+                if path is not None:
+                    paths.append(str(path))
+    return _json_summary(
+        {
+            "path": content.get("path"),
+            "pattern": content.get("pattern"),
+            "count": content.get("count"),
+            "matches": paths,
+            "truncated": content.get("truncated") or len(paths) == MAX_TOOL_MATCHES,
+        }
+    )
+
+
+def _read_content_summary(content: dict[str, object]) -> str:
+    text = str(content.get("content", ""))
+    return _json_summary(
+        {
+            "path": content.get("path"),
+            "content_excerpt": _shorten(text, max_chars=MAX_READ_CONTENT_CHARS),
+        }
+    )
+
+
+def _grep_content_summary(content: dict[str, object]) -> str:
+    matches = content.get("matches", [])
+    summarized_matches: list[dict[str, object]] = []
+    if isinstance(matches, list):
+        for match in matches[:MAX_TOOL_MATCHES]:
+            if isinstance(match, dict):
+                summarized_matches.append(
+                    {
+                        "path": match.get("path"),
+                        "line_number": match.get("line_number"),
+                        "line": match.get("line"),
+                    }
+                )
+    return _json_summary(
+        {
+            "count": content.get("count"),
+            "matches": summarized_matches,
+            "truncated": content.get("truncated") or len(summarized_matches) == MAX_TOOL_MATCHES,
+        }
+    )
 
 
 def _json_summary(value: object, max_chars: int = MAX_TOOL_DETAIL_CHARS) -> str:

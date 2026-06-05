@@ -10,7 +10,7 @@ from agent_system.tools.schemas import ToolPermission, ToolSchema
 class GrepSearchTool(BaseTool):
     schema = ToolSchema(
         name="Grep",
-        description="Search text files in the workspace using a regular expression.",
+        description="Search UTF-8 text files using a regular expression and return matching lines with paths and line numbers. Required arguments: pattern. Optional: path defaults to '.', max_results defaults to 100. Use this to locate relevant files or symbols.",
         input_schema={
             "type": "object",
             "properties": {
@@ -27,7 +27,7 @@ class GrepSearchTool(BaseTool):
 
     async def run(self, arguments: dict[str, object], ctx: ToolContext) -> ToolResult:
         pattern = re.compile(str(arguments["pattern"]))
-        root = ctx.workspace.resolve(str(arguments.get("path", ".")))
+        root = ctx.workspace.resolve_read(str(arguments.get("path", ".")))
         max_results = int(arguments.get("max_results", 100))
         matches: list[dict[str, object]] = []
 

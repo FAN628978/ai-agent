@@ -10,8 +10,14 @@ from agent_system.tools.schemas import ToolPermissionDecision, ToolPermissionPol
 
 
 class Workspace:
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, root: str | Path, read_roots: list[str | Path] | None = None) -> None:
         self.root = Path(root).resolve()
+        roots = [self.root]
+        if read_roots is None:
+            roots.append(Path.home().resolve())
+        else:
+            roots.extend(Path(path).resolve() for path in read_roots)
+        self.read_roots = _unique_paths(roots)
 
     def resolve(self, path: str | Path) -> Path:
         candidate = Path(path)
@@ -21,6 +27,26 @@ class Workspace:
         if not resolved.is_relative_to(self.root):
             raise ValueError(f"path escapes workspace: {path}")
         return resolved
+
+    def resolve_read(self, path: str | Path) -> Path:
+        raw = Path(path)
+        if not raw.is_absolute() and not str(path).startswith("~"):
+            return self.resolve(path)
+        candidate = raw.expanduser()
+        if not candidate.is_absolute():
+            candidate = self.root / candidate
+        resolved = candidate.resolve()
+        if not any(resolved.is_relative_to(root) for root in self.read_roots):
+            raise ValueError(f"path escapes allowed read roots: {path}")
+        return resolved
+
+
+def _unique_paths(paths: list[Path]) -> list[Path]:
+    unique: list[Path] = []
+    for path in paths:
+        if path not in unique:
+            unique.append(path)
+    return unique
 
 
 class ToolContext(BaseModel):

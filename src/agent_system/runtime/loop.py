@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
-from agent_system.agents import PlannerAgent, Reflector
+from agent_system.agents import AgentReasoner, PlannerAgent, Reflector
 from agent_system.execution import Executor
-from agent_system.models import AgentEvent, AgentState, RunMode, UserRequest
+from agent_system.models import AgentEvent, AgentState, Plan, RunMode, Step, ToolCall, ToolResult, UserRequest
 from agent_system.observability import JsonlEventLogger
 from agent_system.runtime.checkpoint import InMemoryCheckpointStore
 from agent_system.runtime.session import InMemorySessionStore, SessionRecord
@@ -17,14 +17,18 @@ class AgentRuntime:
         planner: PlannerAgent | None = None,
         executor: Executor | None = None,
         reflector: Reflector | None = None,
+        reasoner: AgentReasoner | None = None,
         checkpoints: InMemoryCheckpointStore | None = None,
         session_store: InMemorySessionStore | None = None,
         event_logger: JsonlEventLogger | None = None,
         max_iterations: int = 20,
     ) -> None:
-        self.planner = planner or PlannerAgent()
+        if planner is None:
+            raise ValueError("AgentRuntime requires a configured PlannerAgent.")
+        self.planner = planner
         self.executor = executor or Executor()
         self.reflector = reflector or Reflector()
+        self.reasoner = reasoner
         self.checkpoints = checkpoints or InMemoryCheckpointStore()
         self.session_store = session_store or InMemorySessionStore()
         self.event_logger = event_logger
@@ -50,10 +54,23 @@ class AgentRuntime:
             await self.checkpoints.save(state)
 
             if state.plan is None:
-                state.plan = await self.planner.make_plan(
-                    request,
-                    session_context=session.context_summary(),
-                )
+                try:
+                    state.plan = await self.planner.make_plan(
+                        request,
+                        session_context=session.context_summary(),
+                    )
+                except Exception as exc:
+                    event = AgentEvent(
+                        type="run.needs_user_input",
+                        data={
+                            "issues": [f"Planner failed to produce a valid plan: {exc}"],
+                        },
+                    )
+                    events.append(event)
+                    await self._save_session(session, request, state, events)
+                    self._log_event(event, request, state)
+                    yield event
+                    return
                 event = AgentEvent(type="plan.created", data=state.plan.model_dump(mode="json"))
                 events.append(event)
                 self._log_event(event, request, state)
@@ -77,6 +94,91 @@ class AgentRuntime:
             events.append(event)
             self._log_event(event, request, state)
             yield event
+
+            approval_requests = _tool_approval_requests(execution.tool_results)
+            if approval_requests:
+                event = AgentEvent(
+                    type="run.waiting_for_tool_approval",
+                    data={
+                        "task_id": state.task_id,
+                        "tool_approvals": approval_requests,
+                    },
+                )
+                events.append(event)
+                await self._save_session(session, request, state, events)
+                self._log_event(event, request, state)
+                yield event
+                return
+
+            if self.reasoner is not None and state.mode == RunMode.ACT:
+                try:
+                    action = await self.reasoner.next_action(
+                        request=request,
+                        session_context=session.context_summary(),
+                        plan=state.plan,
+                        tool_results=state.tool_results,
+                        iteration=state.iteration,
+                    )
+                except Exception as exc:
+                    event = AgentEvent(
+                        type="run.needs_user_input",
+                        data={"issues": [f"Reasoner failed to produce a valid next action: {exc}"]},
+                    )
+                    events.append(event)
+                    await self._save_session(session, request, state, events)
+                    self._log_event(event, request, state)
+                    yield event
+                    return
+
+                event = AgentEvent(type="reasoning.completed", data=action.summary())
+                events.append(event)
+                self._log_event(event, request, state)
+                yield event
+
+                if action.final_answer:
+                    event = AgentEvent(
+                        type="answer.created",
+                        data={"content": action.final_answer},
+                    )
+                    events.append(event)
+                    self._log_event(event, request, state)
+                    yield event
+
+                    event = AgentEvent(
+                        type="run.completed",
+                        data={"task_id": state.task_id, "confidence": 0.9},
+                    )
+                    events.append(event)
+                    await self._save_session(session, request, state, events)
+                    self._log_event(event, request, state)
+                    yield event
+                    return
+
+                if action.needs_user_input:
+                    event = AgentEvent(type="run.needs_user_input", data={"issues": action.needs_user_input})
+                    events.append(event)
+                    await self._save_session(session, request, state, events)
+                    self._log_event(event, request, state)
+                    yield event
+                    return
+
+                if action.tool_calls:
+                    state.plan = _plan_from_tool_calls(request, state.iteration, action.tool_calls)
+                    event = AgentEvent(type="plan.created", data=state.plan.model_dump(mode="json"))
+                    events.append(event)
+                    self._log_event(event, request, state)
+                    yield event
+                    continue
+
+                event = AgentEvent(
+                    type="run.needs_user_input",
+                    data={"issues": ["Reasoner returned no final answer and no tool calls."]},
+                )
+                events.append(event)
+                await self._save_session(session, request, state, events)
+                self._log_event(event, request, state)
+                yield event
+                return
 
             critique = await self.reflector.evaluate(
                 goal=state.plan.goal,
@@ -136,3 +238,56 @@ class AgentRuntime:
             tool_results=state.tool_results,
         )
         await self.session_store.save(session)
+
+
+def _tool_approval_requests(tool_results: list[ToolResult]) -> list[dict[str, object]]:
+    requests: list[dict[str, object]] = []
+    for result in tool_results:
+        content = result.content if isinstance(result.content, dict) else {}
+        audit = result.metadata.get("audit", {})
+        permission = result.metadata.get("permission", {})
+        if not (
+            content.get("approval_required") is True
+            or (isinstance(audit, dict) and audit.get("status") == "approval_required")
+        ):
+            continue
+        requests.append(
+            {
+                "call_id": result.call_id,
+                "tool": content.get("tool") or result.name,
+                "reason": content.get("reason") or _metadata_reason(permission) or result.error,
+                "arguments_summary": content.get("arguments_summary")
+                or _metadata_arguments_summary(audit),
+            }
+        )
+    return requests
+
+
+def _metadata_reason(permission: object) -> object:
+    if isinstance(permission, dict):
+        return permission.get("reason")
+    return None
+
+
+def _metadata_arguments_summary(audit: object) -> object:
+    if isinstance(audit, dict):
+        return audit.get("arguments_summary")
+    return None
+
+
+def _plan_from_tool_calls(request: UserRequest, iteration: int, tool_calls: list[ToolCall]) -> Plan:
+    calls = list(tool_calls)
+    return Plan(
+        goal=request.content,
+        mode=request.mode,
+        steps=[
+            Step(
+                id=f"reasoning-step-{iteration}",
+                title="Continue with selected tools",
+                objective="Run the next tool calls selected from the previous observations.",
+                suggested_tools=list(dict.fromkeys(call.name for call in calls)),
+                tool_calls=calls,
+                acceptance=["The selected tool calls have been executed and observed."],
+            )
+        ],
+    )

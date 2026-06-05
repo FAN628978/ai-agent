@@ -9,6 +9,31 @@ from agent_system.tools.registry import ToolRegistry
 from agent_system.tools.schemas import ToolPermissionDecision, ToolPermissionPolicy
 
 
+TOOL_NAME_ALIASES = {
+    "dirlist": "Glob",
+    "dir.list": "Glob",
+    "directorylist": "Glob",
+    "directory.list": "Glob",
+    "listdir": "Glob",
+    "list.dir": "Glob",
+    "listfiles": "Glob",
+    "list.files": "Glob",
+    "filelist": "Glob",
+    "file.list": "Glob",
+    "findfiles": "Glob",
+    "find.files": "Glob",
+    "ls": "Glob",
+    "list": "Glob",
+    "readfile": "Read",
+    "file.read": "Read",
+    "writefile": "Write",
+    "file.write": "Write",
+    "search": "Grep",
+    "shell": "Bash",
+    "bash": "Bash",
+}
+
+
 class ToolRouter:
     def __init__(
         self,
@@ -21,15 +46,23 @@ class ToolRouter:
         self.permission_policy = permission_policy or ToolPermissionPolicy()
 
     async def invoke(self, call: ToolCall) -> ToolResult:
+        call = _normalize_call(call)
         try:
             tool = self.registry.get(call.name)
         except KeyError:
+            content = {
+                "tool": call.name,
+                "error": f"unknown tool: {call.name}",
+                "available_tools": [tool["name"] for tool in _available_tools(self.registry)],
+                "tool_definitions": _available_tools(self.registry),
+                "hint": "Choose one of the available tools and generate valid arguments that match its schema.",
+            }
             return ToolResult(
                 call_id=call.id,
                 name=call.name,
                 ok=False,
-                content=None,
-                error=f"unknown tool: {call.name}",
+                content=content,
+                error=content["error"],
                 metadata=_audit_metadata(call, status="error"),
             )
 
@@ -37,12 +70,24 @@ class ToolRouter:
         try:
             validation = await tool.validate_input(call.arguments, ctx)
             if not validation.ok:
+                content = {
+                    "tool": call.name,
+                    "error": validation.message or "invalid tool input",
+                    "required_args": _required_args(tool.schema.input_schema),
+                    "optional_args": tool.schema.optional_arguments(),
+                    "input_schema": tool.schema.input_schema,
+                    "schema": tool.schema.input_schema,
+                    "tool_definition": tool.schema.context_definition(),
+                    "available_tools": [tool["name"] for tool in _available_tools(self.registry)],
+                    "tool_definitions": _available_tools(self.registry),
+                    "hint": "Revise the tool call with arguments that satisfy the schema, or choose another available tool.",
+                }
                 return ToolResult(
                     call_id=call.id,
                     name=call.name,
                     ok=False,
-                    content=None,
-                    error=validation.message or "invalid tool input",
+                    content=content,
+                    error=content["error"],
                     metadata=_audit_metadata(call, status="validation_failed"),
                 )
 
@@ -144,3 +189,34 @@ def _summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
         else:
             summary[key] = type(value).__name__
     return summary
+
+
+def _normalize_call(call: ToolCall) -> ToolCall:
+    name = TOOL_NAME_ALIASES.get(call.name.strip().lower(), call.name)
+    arguments = _normalize_arguments(name, call.arguments)
+    if name == call.name and arguments == call.arguments:
+        return call
+    return call.model_copy(update={"name": name, "arguments": arguments})
+
+
+def _normalize_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(arguments)
+    if name in {"Read", "Write", "Edit", "Grep", "Glob"} and "path" not in normalized:
+        for alias in ("file_path", "filepath", "dir", "directory"):
+            if alias in normalized:
+                normalized["path"] = normalized.pop(alias)
+                break
+    if name == "Glob":
+        normalized.setdefault("path", ".")
+    if name == "Grep":
+        normalized.setdefault("path", ".")
+    return normalized
+
+
+def _available_tools(registry: ToolRegistry) -> list[dict[str, Any]]:
+    return registry.definitions()
+
+
+def _required_args(input_schema: dict[str, Any]) -> list[str]:
+    required = input_schema.get("required", [])
+    return [item for item in required if isinstance(item, str)] if isinstance(required, list) else []

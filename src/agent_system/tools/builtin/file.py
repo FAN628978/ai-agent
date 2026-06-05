@@ -8,7 +8,7 @@ from agent_system.tools.schemas import ToolPermission, ToolSchema
 class ReadFileTool(BaseTool):
     schema = ToolSchema(
         name="Read",
-        description="Read a UTF-8 text file from the workspace.",
+        description="Read a specific UTF-8 text file when its path is known. Required arguments: path. Optional: max_bytes. Use Glob to list directories or discover paths before reading.",
         input_schema={
             "type": "object",
             "properties": {
@@ -23,7 +23,7 @@ class ReadFileTool(BaseTool):
     )
 
     async def run(self, arguments: dict[str, object], ctx: ToolContext) -> ToolResult:
-        path = ctx.workspace.resolve(str(arguments["path"]))
+        path = ctx.workspace.resolve_read(str(arguments["path"]))
         max_bytes = int(arguments.get("max_bytes", 20000))
         content = path.read_text(encoding="utf-8")[:max_bytes]
         return ToolResult(
@@ -37,7 +37,7 @@ class ReadFileTool(BaseTool):
 class WriteFileTool(BaseTool):
     schema = ToolSchema(
         name="Write",
-        description="Create or overwrite a UTF-8 text file in the workspace.",
+        description="Create or overwrite a UTF-8 text file inside the workspace. Required arguments: path, content. Not for reading or listing files.",
         input_schema={
             "type": "object",
             "properties": {
@@ -67,7 +67,7 @@ class WriteFileTool(BaseTool):
 class EditFileTool(BaseTool):
     schema = ToolSchema(
         name="Edit",
-        description="Edit a UTF-8 text file by replacing text.",
+        description="Edit a UTF-8 text file inside the workspace by replacing text. Required arguments: path, old_string, new_string. Use replace_all only when intentionally replacing every occurrence.",
         input_schema={
             "type": "object",
             "properties": {

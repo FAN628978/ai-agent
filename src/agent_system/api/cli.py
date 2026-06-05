@@ -29,12 +29,11 @@ def run(
     user_id: str = typer.Option("local-user", help="User id for the request."),
     workspace_id: str = typer.Option(".", help="Workspace id or path for the request."),
     json_output: bool = typer.Option(False, "--json", help="Print events as JSON Lines."),
-    no_llm: bool = typer.Option(False, "--no-llm", help="Use the rule-based planner instead of configured LLM."),
     show_tool_results: bool = typer.Option(False, "--show-tool-results", help="Print tool result summaries."),
 ) -> None:
     """Run a request in ACT mode."""
     request = _make_request(content, RunMode.ACT, user_id, workspace_id)
-    events = asyncio.run(_run_request(request, config, no_llm))
+    events = asyncio.run(_run_request(request, config))
     _print_events(events, json_output, show_tool_results=show_tool_results)
 
 
@@ -45,11 +44,10 @@ def plan(
     user_id: str = typer.Option("local-user", help="User id for the request."),
     workspace_id: str = typer.Option(".", help="Workspace id or path for the request."),
     json_output: bool = typer.Option(False, "--json", help="Print events as JSON Lines."),
-    no_llm: bool = typer.Option(False, "--no-llm", help="Use the rule-based planner instead of configured LLM."),
 ) -> None:
     """Create a plan and stop before execution."""
     request = _make_request(content, RunMode.PLAN, user_id, workspace_id)
-    events = asyncio.run(_run_request(request, config, no_llm))
+    events = asyncio.run(_run_request(request, config))
     _print_events(events, json_output, show_tool_results=False)
 
 
@@ -58,24 +56,19 @@ def runtime_chat(
     config: Path = typer.Option(Path("configs/default.yaml"), "--config", "-c", help="Config file path."),
     user_id: str = typer.Option("local-user", help="User id for the request."),
     workspace_id: str = typer.Option(".", help="Workspace id or path for the request."),
-    no_llm: bool = typer.Option(False, "--no-llm", help="Use rule-based runtime responses."),
     show_events: bool = typer.Option(False, "--show-events", help="Print runtime events before the answer."),
     show_reasoning: bool = typer.Option(False, "--show-reasoning", help="Show <think>...</think> reasoning blocks."),
 ) -> None:
     """Start a chat loop that routes each turn through AgentRuntime."""
     app_config = load_config(config)
     session_id = str(uuid4())
-    responder = None
-    if not no_llm:
-        responder = OpenAICompatibleClient(
-            base_url=app_config.model.base_url,
-            model=app_config.model.chat,
-            api_key=app_config.model.api_key,
-            timeout_s=app_config.model.timeout_s,
-        )
+    responder = OpenAICompatibleClient(
+        base_url=app_config.model.base_url,
+        model=app_config.model.chat,
+        api_key=app_config.model.api_key,
+        timeout_s=app_config.model.timeout_s,
+    )
     runtime_config = app_config.model_copy(deep=True)
-    if no_llm:
-        runtime_config.model.provider = "rule"
     runtime = create_runtime_from_config(runtime_config, workspace_root=workspace_id)
     history: list[tuple[str, str]] = []
 
@@ -91,7 +84,7 @@ def runtime_chat(
             history.append((content, answer))
             history[:] = history[-app_config.model.chat_history_limit :]
             console.print("[bold green]Assistant[/bold green]")
-            console.print(answer)
+            console.print(_safe_console_text(answer))
             continue
 
         request = UserRequest(
@@ -106,7 +99,7 @@ def runtime_chat(
             _print_events(events, json_output=False, show_tool_results=True)
 
         answer = _render_runtime_answer(events)
-        if responder is not None:
+        if responder is not None and _should_synthesize_runtime_answer(events):
             answer = asyncio.run(
                 _synthesize_runtime_answer(
                     client=responder,
@@ -122,7 +115,7 @@ def runtime_chat(
         history.append((content, answer))
         history[:] = history[-app_config.model.chat_history_limit :]
         console.print("[bold green]Assistant[/bold green]")
-        console.print(answer)
+        console.print(_safe_console_text(answer))
 
 
 def _make_request(content: str, mode: RunMode, user_id: str, workspace_id: str) -> UserRequest:
@@ -135,10 +128,8 @@ def _make_request(content: str, mode: RunMode, user_id: str, workspace_id: str) 
     )
 
 
-async def _run_request(request: UserRequest, config_path: Path, no_llm: bool) -> list[AgentEvent]:
+async def _run_request(request: UserRequest, config_path: Path) -> list[AgentEvent]:
     config = load_config(config_path)
-    if no_llm:
-        config.model.provider = "rule"
     runtime = create_runtime_from_config(config, workspace_root=request.workspace_id)
     return await _run_runtime(runtime, request)
 
@@ -201,6 +192,16 @@ def _runtime_observation(events: list[AgentEvent], max_chars: int = 8000) -> str
 
 
 def _render_runtime_answer(events: list[AgentEvent]) -> str:
+    answer = _event_data(events, "answer.created")
+    if answer:
+        content = answer.get("content")
+        if content:
+            return str(content)
+
+    approval = _event_data(events, "run.waiting_for_tool_approval")
+    if approval:
+        return _render_tool_approval_answer(approval)
+
     tool_results = _collect_tool_results(events)
     if tool_results:
         return _render_tool_results_answer(tool_results)
@@ -219,6 +220,13 @@ def _render_runtime_answer(events: list[AgentEvent]) -> str:
         return f"运行已停止：{stopped.get('reason', 'unknown')}"
 
     return "Runtime 已处理请求，但没有生成可展示的结果。"
+
+
+def _should_synthesize_runtime_answer(events: list[AgentEvent]) -> bool:
+    if _event_data(events, "answer.created"):
+        return False
+    tool_results = _collect_tool_results(events)
+    return bool(tool_results) and all(result.get("ok") is True for result in tool_results)
 
 
 def _event_data(events: list[AgentEvent], event_type: str) -> dict[str, object]:
@@ -273,6 +281,24 @@ def _render_tool_results_answer(tool_results: list[dict[str, object]]) -> str:
             lines.append(f"已修改 {content.get('path')}，替换次数：{content.get('replacements')}")
         else:
             lines.append(json.dumps(result, ensure_ascii=False))
+    return "\n".join(lines)
+
+
+def _render_tool_approval_answer(data: dict[str, object]) -> str:
+    approvals = data.get("tool_approvals", [])
+    if not isinstance(approvals, list) or not approvals:
+        return "需要工具审批。"
+
+    lines = ["需要工具审批："]
+    for approval in approvals:
+        if not isinstance(approval, dict):
+            continue
+        tool = approval.get("tool")
+        reason = approval.get("reason")
+        arguments = approval.get("arguments_summary")
+        lines.append(f"- {tool}: {reason}")
+        if arguments:
+            lines.append(f"  arguments: {json.dumps(arguments, ensure_ascii=False)}")
     return "\n".join(lines)
 
 
@@ -363,6 +389,11 @@ def _strip_reasoning_blocks(content: str) -> str:
         result = result[:start] + result[end + len("</think>") :]
 
 
+def _safe_console_text(content: str) -> str:
+    encoding = getattr(console.file, "encoding", None) or "utf-8"
+    return content.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
 def _print_events(events: list[AgentEvent], json_output: bool, show_tool_results: bool = False) -> None:
     if json_output:
         for event in events:
@@ -375,7 +406,7 @@ def _print_events(events: list[AgentEvent], json_output: bool, show_tool_results
         if event.type == "execution.completed":
             data.pop("tool_results", None)
         if data:
-            console.print_json(json.dumps(data, ensure_ascii=False))
+            console.print(json.dumps(data, ensure_ascii=True, indent=2), markup=False)
 
     if show_tool_results:
         _print_tool_results(events)
