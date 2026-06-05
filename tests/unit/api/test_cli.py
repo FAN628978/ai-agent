@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -5,10 +6,12 @@ from typer.testing import CliRunner
 
 from agent_system.api.cli import (
     _render_runtime_answer,
+    _should_synthesize_runtime_answer,
     _strip_reasoning_blocks,
     app,
 )
 from agent_system.models import AgentEvent
+from agent_system.runtime import InMemorySessionStore
 from agent_system.tools.schemas import ToolSchema
 
 
@@ -23,10 +26,13 @@ class FakeRuntime:
             AgentEvent(type="run.completed", data={"task_id": "task-1", "confidence": 1.0}),
         ]
         self.contents: list[str] = []
+        self.session_ids: list[str] = []
+        self.session_store = InMemorySessionStore()
         self.planner = SimpleNamespace(context=SimpleNamespace(tools=[]))
 
     async def run(self, request):
         self.contents.append(request.content)
+        self.session_ids.append(request.session_id)
         for event in self.events:
             yield event
 
@@ -182,6 +188,67 @@ def test_cli_runtime_chat_passes_raw_turns_to_runtime(monkeypatch) -> None:
     assert runtime.contents == ["first", "second"]
 
 
+def test_cli_runtime_chat_synthesis_uses_displayed_session_history(monkeypatch) -> None:
+    histories: list[list[tuple[str, str]]] = []
+    runtime = FakeRuntime(
+        [
+            AgentEvent(
+                type="execution.completed",
+                data={
+                    "tool_results": [
+                        {
+                            "name": "Read",
+                            "ok": True,
+                            "content": {"path": "README.md", "content": "hello"},
+                        }
+                    ]
+                },
+            ),
+            AgentEvent(
+                type="answer.created",
+                data={"content": "runtime fallback", "source": "reflector"},
+            ),
+        ]
+    )
+
+    async def fake_synthesize_runtime_answer(**kwargs):
+        histories.append(list(kwargs["history"]))
+        return f"displayed answer {len(histories)}"
+
+    monkeypatch.setattr("agent_system.api.cli.create_runtime_from_config", lambda *args, **kwargs: runtime)
+    monkeypatch.setattr("agent_system.api.cli._synthesize_runtime_answer", fake_synthesize_runtime_answer)
+
+    result = runner.invoke(app, ["runtime-chat"], input="first\nsecond\n/exit\n")
+
+    assert result.exit_code == 0
+    assert histories == [
+        [],
+        [("first", "displayed answer 1")],
+    ]
+    session = asyncio.run(runtime.session_store.get(runtime.session_ids[0]))
+    assert session.messages == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "displayed answer 1"},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "displayed answer 2"},
+    ]
+
+
+def test_cli_runtime_chat_history_request_uses_displayed_history(monkeypatch) -> None:
+    runtime = FakeRuntime([AgentEvent(type="run.completed", data={"task_id": "task-1", "confidence": 1.0})])
+
+    monkeypatch.setattr("agent_system.api.cli.create_runtime_from_config", lambda *args, **kwargs: runtime)
+
+    result = runner.invoke(app, ["runtime-chat"], input="first\nsecond\n完整对话历史记录\n/exit\n")
+
+    assert result.exit_code == 0
+    assert runtime.contents == ["first", "second"]
+    assert "对话历史记录" in result.output
+    assert "1. 用户：first" in result.output
+    assert "2. 用户：second" in result.output
+    assert "3. 用户：完整对话历史记录" in result.output
+
+
 def test_cli_runtime_chat_help_command_does_not_call_runtime(monkeypatch) -> None:
     runtime = FakeRuntime()
 
@@ -286,8 +353,10 @@ def test_cli_runtime_chat_clear_command_resets_response_history(monkeypatch) -> 
     result = runner.invoke(app, ["runtime-chat"], input="first\n/clear\nsecond\n/exit\n")
 
     assert result.exit_code == 0
-    assert "Runtime chat history cleared." in result.output
+    assert "Runtime chat session cleared." in result.output
     assert history_lengths == [0, 0]
+    assert len(runtime.session_ids) == 2
+    assert runtime.session_ids[0] != runtime.session_ids[1]
 
 
 def test_cli_runtime_chat_does_not_synthesize_failed_tool_results(monkeypatch) -> None:
@@ -323,6 +392,26 @@ def test_cli_runtime_chat_does_not_synthesize_failed_tool_results(monkeypatch) -
     assert result.exit_code == 0
     assert "Glob 执行失败：missing required argument: pattern" in result.output
     assert synthesize_called is False
+
+
+def test_cli_does_not_synthesize_reasoner_final_answer() -> None:
+    events = [
+        AgentEvent(
+            type="execution.completed",
+            data={
+                "tool_results": [
+                    {
+                        "name": "Read",
+                        "ok": True,
+                        "content": {"path": "README.md", "content": "hello"},
+                    }
+                ]
+            },
+        ),
+        AgentEvent(type="answer.created", data={"content": "final", "source": "reasoner"}),
+    ]
+
+    assert _should_synthesize_runtime_answer(events) is False
 
 
 def test_cli_no_llm_option_is_removed() -> None:

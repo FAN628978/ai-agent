@@ -55,6 +55,7 @@ def test_jsonl_event_logger_summarizes_plan_created(tmp_path) -> None:
     assert record["task_id"] == "task-1"
     assert record["data"] == {
         "goal": "Inspect project",
+        "task_goal": "Inspect project",
         "mode": "act",
         "step_count": 1,
         "risk_count": 1,

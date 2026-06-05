@@ -39,8 +39,16 @@ def test_plan_step_and_critique_defaults() -> None:
     assert step.risk == "low"
     assert plan.assumptions == []
     assert plan.risks == []
+    assert plan.goal == "Understand project"
+    assert plan.task_goal == "Understand project"
+    assert plan.expected_outputs == []
+    assert plan.constraints == []
+    assert plan.success_criteria == []
     assert critique.issues == []
     assert critique.next_action == "finish"
+    assert critique.reason == ""
+    assert critique.missing_items == []
+    assert critique.suggested_next_action == ""
 
 
 def test_step_tool_calls_roundtrip() -> None:

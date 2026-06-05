@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol, cast
 
 from pydantic import BaseModel, Field
 
 from agent_system.llm import ChatMessage
-from agent_system.models import Plan, ToolCall, ToolResult, UserRequest
+from agent_system.models import Critique, Plan, ToolCall, ToolResult, UserRequest
 from agent_system.tools.registry import ToolRegistry
 from agent_system.tools.schemas import ToolSchema
 
@@ -55,18 +55,22 @@ class ReasonerLLMClient(Protocol):
 
 
 class AgentAction(BaseModel):
+    action: Literal["tool_calls", "ask_user", "replan", "final"] = "tool_calls"
     thought: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
     final_answer: str | None = None
     needs_user_input: list[str] = Field(default_factory=list)
+    replan_reason: str | None = None
 
     def summary(self) -> dict[str, object]:
         return {
+            "action": self.action,
             "thought": self.thought,
             "tool_call_count": len(self.tool_calls),
             "tool_calls": [call.model_dump(mode="json") for call in self.tool_calls],
             "has_final_answer": bool(self.final_answer),
             "needs_user_input": self.needs_user_input,
+            "replan_reason": self.replan_reason,
         }
 
 
@@ -96,6 +100,7 @@ class AgentReasoner:
         request: UserRequest,
         session_context: str,
         plan: Plan,
+        critique: Critique | None = None,
         tool_results: list[ToolResult],
         iteration: int,
     ) -> AgentAction:
@@ -103,6 +108,7 @@ class AgentReasoner:
             request=request,
             session_context=session_context,
             plan=plan,
+            critique=critique,
             tool_results=tool_results,
             iteration=iteration,
         )
@@ -114,6 +120,7 @@ class AgentReasoner:
             )
             if native_tool_calls:
                 return AgentAction(
+                    action="tool_calls",
                     thought="Model selected native tool calls from registered tool definitions.",
                     tool_calls=native_tool_calls,
                 )
@@ -146,7 +153,9 @@ class AgentReasoner:
                 role="user",
                 content=(
                     "The previous response was not a valid JSON action. "
-                    "Return exactly one JSON object with keys thought, tool_calls, final_answer, and needs_user_input. "
+                    "Return exactly one JSON object with keys action, thought, tool_calls, final_answer, "
+                    "needs_user_input, and replan_reason. "
+                    "Set action to one of: tool_calls, ask_user, replan, final. "
                     "Use only registered tool names from the registered tool definitions. "
                     "Do not include markdown or explanatory text outside the JSON object."
                 ),
@@ -156,6 +165,7 @@ class AgentReasoner:
         native_tool_calls = self._normalize_native_tool_calls(getattr(response, "tool_calls", []), iteration=iteration)
         if native_tool_calls:
             return AgentAction(
+                action="tool_calls",
                 thought="Model selected native tool calls from registered tool definitions.",
                 tool_calls=native_tool_calls,
             )
@@ -167,6 +177,7 @@ class AgentReasoner:
         request: UserRequest,
         session_context: str,
         plan: Plan,
+        critique: Critique | None,
         tool_results: list[ToolResult],
         iteration: int,
     ) -> list[ChatMessage]:
@@ -180,17 +191,19 @@ class AgentReasoner:
                 role="system",
                 content=(
                     "You are the reasoning controller inside a local Agent Runtime. "
-                    "Use the plan and tool observations to decide the next action. "
+                    "Use the plan, Reflector critique, and tool observations to decide the next action. "
                     "Return exactly one JSON object and no markdown. "
+                    "Set action to exactly one of: tool_calls, ask_user, replan, final. "
                     "Use only registered tool names from the registered tool definitions. "
                     "Never invent tool names. "
-                    "If the user's request is solved, set final_answer to the user-facing answer and leave tool_calls empty. "
-                    "If more workspace evidence is needed, set tool_calls to concrete calls using the registered tools. "
+                    "If the user's request is solved, set action=final and final_answer to the user-facing answer. "
+                    "If more workspace evidence is needed, set action=tool_calls and tool_calls to concrete calls using the registered tools. "
+                    "If the plan is unsuitable, set action=replan and explain replan_reason. "
                     "If a tool result reports a validation or execution error, use that observation to revise the next tool call or ask the user. "
                     "For unknown-tool observations, choose a registered tool from available_tools. "
                     "For validation errors, fix the arguments according to required_args and input_schema. "
-                    "Never return an empty final_answer, empty tool_calls, and empty needs_user_input together. "
-                    "If the request cannot be completed safely or needs clarification, set needs_user_input. "
+                    "Never return action=tool_calls with empty tool_calls. "
+                    "If the request cannot be completed safely or needs clarification, set action=ask_user and needs_user_input. "
                     "Do not invent filesystem contents, command output, or tool results."
                 ),
             ),
@@ -201,9 +214,10 @@ class AgentReasoner:
                     f"{tool_schemas}\n\n"
                     f"Environment:\n{self.environment}\n\n"
                     "Required JSON shape:\n"
-                    '{"thought":"brief reasoning summary","tool_calls":[{"id":"optional",'
+                    '{"action":"tool_calls|ask_user|replan|final","thought":"brief reasoning summary",'
+                    '"tool_calls":[{"id":"optional",'
                     '"name":"registered tool name","arguments":{}}],'
-                    '"final_answer":"answer or null","needs_user_input":[]}\n\n'
+                    '"final_answer":"answer or null","needs_user_input":[],"replan_reason":"reason or null"}\n\n'
                     "Construct tool arguments from each tool's description, input_schema, required_arguments, and optional_arguments."
                 ),
             ),
@@ -214,6 +228,7 @@ class AgentReasoner:
                     f"Session context:\n{session_context or '(none)'}\n\n"
                     f"Current user request:\n{request.content}\n\n"
                     f"Current plan:\n{plan.model_dump_json(indent=2)}\n\n"
+                    f"Reflector critique:\n{critique.model_dump_json(indent=2) if critique else '(none)'}\n\n"
                     f"Tool observations:\n{self._tool_observation(tool_results)}"
                 ),
             ),
@@ -278,15 +293,29 @@ class AgentReasoner:
         tool_calls = self._normalize_tool_calls(data.get("tool_calls", []), iteration=iteration)
         final_answer = data.get("final_answer")
         needs_user_input = data.get("needs_user_input", [])
+        action = str(data.get("action") or "").strip().lower()
+        replan_reason = data.get("replan_reason")
         if isinstance(needs_user_input, str):
             needs_user_input = [needs_user_input]
         if not isinstance(needs_user_input, list):
             needs_user_input = []
+        if action not in {"tool_calls", "ask_user", "replan", "final"}:
+            if final_answer:
+                action = "final"
+            elif needs_user_input:
+                action = "ask_user"
+            elif str(replan_reason or "").strip():
+                action = "replan"
+            else:
+                action = "tool_calls"
+        normalized_action = cast(Literal["tool_calls", "ask_user", "replan", "final"], action)
         return AgentAction(
+            action=normalized_action,
             thought=str(data.get("thought", "")),
             tool_calls=tool_calls,
             final_answer=str(final_answer).strip() if final_answer is not None else None,
             needs_user_input=[str(item) for item in needs_user_input],
+            replan_reason=str(replan_reason).strip() if replan_reason is not None else None,
         )
 
     def _normalize_tool_calls(self, value: object, *, iteration: int) -> list[ToolCall]:
@@ -357,11 +386,13 @@ class AgentReasoner:
     ) -> AgentAction:
         if not tool_results:
             return AgentAction(
+                action="ask_user",
                 thought=f"Reasoner LLM failed ({error}).",
                 needs_user_input=["Reasoner could not produce a valid JSON next action."],
             )
 
         return AgentAction(
+            action="final",
             thought=f"Reasoner LLM failed ({error}); summarize available observations.",
             final_answer=_fallback_answer(request, tool_results),
         )

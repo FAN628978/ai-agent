@@ -101,6 +101,12 @@ class ContinueThenAnswerReasoner:
         return AgentAction(thought="README was observed.", final_answer="README says hello agent.")
 
 
+class ReplanReasoner:
+    async def next_action(self, **kwargs) -> AgentAction:
+        assert kwargs["critique"].done is False
+        return AgentAction(action="replan", thought="Initial plan has no executable tool.", replan_reason="Need tools.")
+
+
 class SequencedLLMClient:
     def __init__(self, contents: list[str]) -> None:
         self.contents = contents
@@ -142,6 +148,7 @@ def test_runtime_completes_act_mode_event_flow() -> None:
         "plan.created",
         "execution.completed",
         "reflection.completed",
+        "answer.created",
         "run.completed",
     ]
 
@@ -183,11 +190,11 @@ def test_runtime_reasoner_can_create_final_answer_after_observation() -> None:
         "run.started",
         "plan.created",
         "execution.completed",
-        "reasoning.completed",
+        "reflection.completed",
         "answer.created",
         "run.completed",
     ]
-    assert events[-2].data["content"] == "The workspace was inspected."
+    assert "Inspect the project" in events[-2].data["content"]
 
 
 def test_runtime_reasoner_can_continue_with_more_tool_calls(tmp_path) -> None:
@@ -207,9 +214,11 @@ def test_runtime_reasoner_can_continue_with_more_tool_calls(tmp_path) -> None:
         "run.started",
         "plan.created",
         "execution.completed",
+        "reflection.completed",
         "reasoning.completed",
         "plan.created",
         "execution.completed",
+        "reflection.completed",
         "reasoning.completed",
         "answer.created",
         "run.completed",
@@ -447,10 +456,31 @@ def test_runtime_saves_session_state_across_turns() -> None:
         "plan.created",
         "execution.completed",
         "reflection.completed",
+        "answer.created",
         "run.completed",
     ]
     assert len(session.recent_tool_results) == 1
     assert "Inspect the project" in session.summary
+
+
+def test_session_record_display_turn_replaces_runtime_summary() -> None:
+    session = SessionRecord(session_id="session-1")
+    request = make_request()
+    plan = Plan(goal=request.content, mode=request.mode, steps=[])
+    events = [
+        AgentEvent(type="run.started", data={"task_id": "task-1"}),
+        AgentEvent(type="run.completed", data={"task_id": "task-1", "confidence": 1.0}),
+    ]
+
+    session.record_run(request=request, events=events, plan=plan, tool_results=[])
+    session.record_display_turn(request.content, "项目里包含 README.md 和 src 目录。")
+
+    assert session.messages == [
+        {"role": "user", "content": "Inspect the project"},
+        {"role": "assistant", "content": "项目里包含 README.md 和 src 目录。"},
+    ]
+    assert "Completed:" not in session.summary
+    assert "项目里包含 README.md" in session.summary
 
 
 def test_runtime_keeps_sessions_isolated() -> None:
@@ -518,6 +548,40 @@ class WriteApprovalPlanner:
         )
 
 
+class ReplanningPlanner:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.session_contexts: list[str | None] = []
+
+    async def make_plan(self, request: UserRequest, session_context: str | None = None) -> Plan:
+        self.calls += 1
+        self.session_contexts.append(session_context)
+        if self.calls == 1:
+            return Plan(
+                goal=request.content,
+                mode=request.mode,
+                steps=[Step(id="step-1", title="No tools", objective=request.content)],
+            )
+        return Plan(
+            goal=request.content,
+            mode=request.mode,
+            steps=[
+                Step(
+                    id="step-2",
+                    title="List files",
+                    objective="List files",
+                    tool_calls=[
+                        ToolCall(
+                            id="glob-1",
+                            name="Glob",
+                            arguments={"pattern": "*", "path": "."},
+                        )
+                    ],
+                )
+            ],
+        )
+
+
 def test_runtime_emits_tool_approval_event(tmp_path) -> None:
     registry = ToolRegistry()
     registry.register(WriteFileTool())
@@ -551,6 +615,42 @@ def test_runtime_emits_tool_approval_event(tmp_path) -> None:
     assert not (tmp_path / "notes.txt").exists()
 
 
+def test_runtime_reasoner_can_request_replan(tmp_path) -> None:
+    (tmp_path / "notes.txt").write_text("hello", encoding="utf-8")
+    planner = ReplanningPlanner()
+    registry = ToolRegistry()
+    registry.register(GlobTool())
+    runtime = AgentRuntime(
+        planner=planner,
+        executor=Executor(ToolRouter(registry, tmp_path)),
+        reasoner=ReplanReasoner(),
+    )
+
+    events = asyncio.run(_collect_full_events(runtime, make_request()))
+
+    assert planner.calls == 2
+    assert "Reflector reason:" in planner.session_contexts[1]
+    assert [event.type for event in events] == [
+        "run.started",
+        "plan.created",
+        "execution.completed",
+        "reflection.completed",
+        "reasoning.completed",
+        "plan.created",
+        "execution.completed",
+        "reflection.completed",
+        "answer.created",
+        "run.completed",
+    ]
+    tool_results = [
+        result
+        for event in events
+        if event.type == "execution.completed"
+        for result in event.data.get("tool_results", [])
+    ]
+    assert tool_results[-1]["name"] == "Glob"
+
+
 def test_runtime_passes_previous_session_context_to_planner() -> None:
     planner = RecordingPlanner()
     runtime = make_runtime_with_glob(planner=planner)
@@ -564,6 +664,26 @@ def test_runtime_passes_previous_session_context_to_planner() -> None:
     assert planner.session_contexts[1] is not None
     assert "Conversation summary:" in planner.session_contexts[1]
     assert "Previous plan goal: Inspect the project" in planner.session_contexts[1]
+
+
+def test_runtime_uses_displayed_answer_in_next_turn_session_context() -> None:
+    planner = RecordingPlanner()
+    sessions = InMemorySessionStore()
+    runtime = make_runtime_with_glob(planner=planner, session_store=sessions)
+    first = make_request()
+
+    asyncio.run(collect_events(runtime, first))
+    session = asyncio.run(sessions.get("session-1"))
+    session.record_display_turn(first.content, "第一轮展示给用户的真实回答。")
+    asyncio.run(sessions.save(session))
+
+    second = make_request()
+    second.content = "继续"
+    asyncio.run(collect_events(runtime, second))
+
+    assert planner.session_contexts[1] is not None
+    assert "第一轮展示给用户的真实回答。" in planner.session_contexts[1]
+    assert "Completed:" not in planner.session_contexts[1]
 
 
 def test_session_context_summary_limits_tool_result_content() -> None:

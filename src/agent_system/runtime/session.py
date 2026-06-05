@@ -51,6 +51,20 @@ class SessionRecord(BaseModel):
         self.recent_plan = plan
         self.summary = _message_summary(self.messages)
 
+    def record_display_turn(self, user_content: str, assistant_content: str) -> None:
+        if (
+            len(self.messages) >= 2
+            and self.messages[-2].get("role") == "user"
+            and self.messages[-2].get("content") == user_content
+            and self.messages[-1].get("role") == "assistant"
+        ):
+            self.messages[-1]["content"] = assistant_content
+        else:
+            self.messages.append({"role": "user", "content": user_content})
+            self.messages.append({"role": "assistant", "content": assistant_content})
+        self.messages = self.messages[-MAX_MESSAGES:]
+        self.summary = _message_summary(self.messages)
+
 
 class InMemorySessionStore:
     def __init__(self) -> None:

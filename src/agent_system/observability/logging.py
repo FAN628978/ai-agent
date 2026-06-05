@@ -37,7 +37,8 @@ def summarize_event_data(event: AgentEvent) -> dict[str, Any]:
         steps = data.get("steps", [])
         risks = data.get("risks", [])
         return {
-            "goal": data.get("goal"),
+            "goal": data.get("task_goal") or data.get("goal"),
+            "task_goal": data.get("task_goal") or data.get("goal"),
             "mode": data.get("mode"),
             "step_count": len(steps) if isinstance(steps, list) else 0,
             "risk_count": len(risks) if isinstance(risks, list) else 0,
@@ -54,6 +55,7 @@ def summarize_event_data(event: AgentEvent) -> dict[str, Any]:
             "done": data.get("done"),
             "confidence": data.get("confidence"),
             "next_action": data.get("next_action"),
+            "suggested_next_action": data.get("suggested_next_action"),
             "issue_count": len(issues) if isinstance(issues, list) else 0,
         }
 

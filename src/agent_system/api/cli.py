@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -70,23 +71,33 @@ def runtime_chat(
     )
     runtime_config = app_config.model_copy(deep=True)
     runtime = create_runtime_from_config(runtime_config, workspace_root=workspace_id)
-    history: list[tuple[str, str]] = []
+
+    def reset_session() -> None:
+        nonlocal session_id
+        session_id = str(uuid4())
 
     console.print("Runtime chat started. Type '/help' for commands.")
     while True:
         content = typer.prompt("You")
         if _is_exit_command(content):
             raise typer.Exit()
-        if _handle_runtime_slash_command(content, history, runtime):
+        if _handle_runtime_slash_command(content, runtime, reset_session=reset_session):
+            continue
+        if _is_conversation_history_request(content):
+            history = asyncio.run(_runtime_chat_history(runtime, session_id))
+            answer = _render_conversation_history(history, current_content=content)
+            asyncio.run(_record_runtime_chat_answer(runtime, session_id, content, answer))
+            console.print("[bold green]Assistant[/bold green]")
+            console.print(_safe_console_text(answer))
             continue
         if _is_tool_list_request(content):
             answer = _render_available_tools(runtime)
-            history.append((content, answer))
-            history[:] = history[-app_config.model.chat_history_limit :]
+            asyncio.run(_record_runtime_chat_answer(runtime, session_id, content, answer))
             console.print("[bold green]Assistant[/bold green]")
             console.print(_safe_console_text(answer))
             continue
 
+        history = asyncio.run(_runtime_chat_history(runtime, session_id))
         request = UserRequest(
             session_id=session_id,
             user_id=user_id,
@@ -112,8 +123,7 @@ def runtime_chat(
                     show_reasoning=show_reasoning,
                 )
             )
-        history.append((content, answer))
-        history[:] = history[-app_config.model.chat_history_limit :]
+        asyncio.run(_record_runtime_chat_answer(runtime, session_id, content, answer))
         console.print("[bold green]Assistant[/bold green]")
         console.print(_safe_console_text(answer))
 
@@ -136,6 +146,37 @@ async def _run_request(request: UserRequest, config_path: Path) -> list[AgentEve
 
 async def _run_runtime(runtime: AgentRuntime, request: UserRequest) -> list[AgentEvent]:
     return [event async for event in runtime.run(request)]
+
+
+async def _runtime_chat_history(runtime: AgentRuntime, session_id: str) -> list[tuple[str, str]]:
+    session = await runtime.session_store.get(session_id)
+    return _message_pairs(session.messages)
+
+
+async def _record_runtime_chat_answer(
+    runtime: AgentRuntime,
+    session_id: str,
+    user_content: str,
+    assistant_content: str,
+) -> None:
+    session = await runtime.session_store.get(session_id)
+    session.record_display_turn(user_content, assistant_content)
+    await runtime.session_store.save(session)
+
+
+def _message_pairs(messages: list[dict[str, str]]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    pending_user: str | None = None
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content", "")
+        if role == "user":
+            pending_user = content
+            continue
+        if role == "assistant" and pending_user is not None:
+            pairs.append((pending_user, content))
+            pending_user = None
+    return pairs
 
 
 async def _synthesize_runtime_answer(
@@ -207,7 +248,7 @@ def _render_runtime_answer(events: list[AgentEvent]) -> str:
         return _render_tool_results_answer(tool_results)
 
     plan = _event_data(events, "plan.created")
-    goal = plan.get("goal") if isinstance(plan, dict) else None
+    goal = (plan.get("task_goal") or plan.get("goal")) if isinstance(plan, dict) else None
     if _event_data(events, "run.completed"):
         return f"已完成：{goal or '请求已处理'}"
 
@@ -223,7 +264,8 @@ def _render_runtime_answer(events: list[AgentEvent]) -> str:
 
 
 def _should_synthesize_runtime_answer(events: list[AgentEvent]) -> bool:
-    if _event_data(events, "answer.created"):
+    answer = _event_data(events, "answer.created")
+    if answer and answer.get("source") == "reasoner":
         return False
     tool_results = _collect_tool_results(events)
     return bool(tool_results) and all(result.get("ok") is True for result in tool_results)
@@ -306,7 +348,11 @@ def _is_exit_command(content: str) -> bool:
     return content.strip().lower() in {"exit", "quit", "/exit", "/quit"}
 
 
-def _handle_runtime_slash_command(content: str, history: list[tuple[str, str]], runtime: AgentRuntime) -> bool:
+def _handle_runtime_slash_command(
+    content: str,
+    runtime: AgentRuntime,
+    reset_session: Callable[[], None] | None = None,
+) -> bool:
     stripped = content.strip()
     if not stripped.startswith("/"):
         return False
@@ -316,8 +362,9 @@ def _handle_runtime_slash_command(content: str, history: list[tuple[str, str]], 
         _print_runtime_slash_help()
         return True
     if command == "/clear":
-        history.clear()
-        console.print("Runtime chat history cleared.")
+        if reset_session is not None:
+            reset_session()
+        console.print("Runtime chat session cleared.")
         return True
     if command == "/tools":
         console.print(_render_available_tools(runtime))
@@ -333,7 +380,7 @@ def _handle_runtime_slash_command(content: str, history: list[tuple[str, str]], 
 def _print_runtime_slash_help() -> None:
     console.print("Available runtime-chat commands:")
     console.print("/help  Show available commands.")
-    console.print("/clear Clear local runtime-chat response history.")
+    console.print("/clear Clear runtime-chat session history.")
     console.print("/tools Show available Runtime tools.")
     console.print("/exit  Exit runtime-chat.")
     console.print("/quit  Exit runtime-chat.")
@@ -357,6 +404,42 @@ def _is_tool_list_request(content: str) -> bool:
         "list tools",
     ]
     return any(keyword in normalized for keyword in tool_keywords)
+
+
+def _is_conversation_history_request(content: str) -> bool:
+    normalized = content.strip().lower()
+    if not normalized:
+        return False
+    history_keywords = [
+        "对话历史",
+        "历史记录",
+        "完整对话",
+        "完整历史",
+        "我问了你什么",
+        "我刚才问了什么",
+        "问过什么",
+        "conversation history",
+        "chat history",
+    ]
+    return any(keyword in normalized for keyword in history_keywords)
+
+
+def _render_conversation_history(history: list[tuple[str, str]], current_content: str) -> str:
+    lines = ["对话历史记录："]
+    for index, (user, assistant) in enumerate(history, start=1):
+        lines.append(f"{index}. 用户：{user}")
+        lines.append(f"   助手：{_shorten_history_text(assistant)}")
+
+    current_index = len(history) + 1
+    lines.append(f"{current_index}. 用户：{current_content}")
+    lines.append("   助手：本条历史记录回答。")
+    return "\n".join(lines)
+
+
+def _shorten_history_text(content: str, max_chars: int = 1200) -> str:
+    if len(content) <= max_chars:
+        return content
+    return content[:max_chars] + "...[truncated]"
 
 
 def _render_available_tools(runtime: AgentRuntime) -> str:

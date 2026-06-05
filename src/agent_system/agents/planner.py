@@ -75,7 +75,7 @@ class PlannerAgent:
 
     def _make_rule_plan(self, request: UserRequest) -> Plan:
         return Plan(
-            goal=request.content,
+            task_goal=request.content,
             mode=request.mode,
             steps=[
                 Step(
@@ -85,6 +85,9 @@ class PlannerAgent:
                     acceptance=["Request has been processed by the runtime."],
                 )
             ],
+            expected_outputs=["A response that addresses the user request."],
+            constraints=["Use only available runtime tools and respect configured permissions."],
+            success_criteria=["The user request has been answered or the runtime has identified missing information."],
             assumptions=["Using the built-in conservative fallback planner."],
             risks=[] if request.mode != RunMode.BACKGROUND else ["Background execution is not implemented yet."],
         )
@@ -139,6 +142,7 @@ class PlannerAgent:
                     f"{reason} "
                     "Review the user's request again. If the request needs filesystem, search, shell, "
                     "or workspace observation, return a revised JSON plan with concrete tool_calls. "
+                    "Use the plan keys task_goal, steps, expected_outputs, constraints, success_criteria, assumptions, and risks. "
                     "Choose tool names and arguments only from the registered tool definitions and their input_schema. "
                     "Use each tool's description, required_arguments, and optional_arguments to decide whether it fits. "
                     "For named locations outside the workspace, ask for clarification instead of inventing access. "
@@ -173,13 +177,17 @@ class PlannerAgent:
                 data, _end = decoder.raw_decode(content[index:])
             except json.JSONDecodeError:
                 continue
-            if isinstance(data, dict) and "goal" in data and "steps" in data:
+            if isinstance(data, dict) and ("task_goal" in data or "goal" in data) and "steps" in data:
                 return data
         raise ValueError("LLM planner response did not contain a JSON plan.")
 
     def _normalize_plan_data(self, data: dict[str, object]) -> dict[str, object]:
         normalized = dict(data)
-        normalized["goal"] = str(normalized.get("goal", ""))
+        normalized["task_goal"] = str(normalized.get("task_goal") or normalized.get("goal", ""))
+        normalized.pop("goal", None)
+        normalized["expected_outputs"] = self._normalize_string_list(normalized.get("expected_outputs", []))
+        normalized["constraints"] = self._normalize_string_list(normalized.get("constraints", []))
+        normalized["success_criteria"] = self._normalize_string_list(normalized.get("success_criteria", []))
         normalized["assumptions"] = self._normalize_string_list(normalized.get("assumptions", []))
         normalized["risks"] = self._normalize_string_list(normalized.get("risks", []))
 
@@ -315,7 +323,7 @@ class PlannerAgent:
 
     def _plan_from_tool_calls(self, request: UserRequest, tool_calls: list[ToolCall]) -> Plan:
         return Plan(
-            goal=request.content,
+            task_goal=request.content,
             mode=request.mode,
             steps=[
                 Step(
@@ -327,6 +335,9 @@ class PlannerAgent:
                     acceptance=["Selected tool calls have been executed and observed."],
                 )
             ],
+            expected_outputs=["Tool observations needed to answer the user request."],
+            constraints=["Use only the native tool calls selected from registered tool definitions."],
+            success_criteria=["Selected tool calls have executed successfully and produced usable observations."],
             assumptions=["Planner LLM selected native tool calls from registered tool definitions."],
         )
 
