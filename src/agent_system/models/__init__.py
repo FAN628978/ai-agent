@@ -1,6 +1,7 @@
 """Core protocol models for the Agent System runtime."""
 
 from agent_system.models.events import AgentEvent
+from agent_system.models.execution import ExecutionResult, StepResult
 from agent_system.models.planning import Critique, Plan, Step
 from agent_system.models.request import RunMode, UserRequest
 from agent_system.models.runtime import AgentState
@@ -10,9 +11,11 @@ __all__ = [
     "AgentEvent",
     "AgentState",
     "Critique",
+    "ExecutionResult",
     "Plan",
     "RunMode",
     "Step",
+    "StepResult",
     "ToolCall",
     "ToolResult",
     "UserRequest",

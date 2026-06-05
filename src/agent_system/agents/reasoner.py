@@ -7,7 +7,7 @@ from typing import Literal, Protocol, cast
 from pydantic import BaseModel, Field
 
 from agent_system.llm import ChatMessage
-from agent_system.models import Critique, Plan, ToolCall, ToolResult, UserRequest
+from agent_system.models import Critique, Plan, StepResult, ToolCall, ToolResult, UserRequest
 from agent_system.tools.normalization import clean_tool_name, normalize_tool_arguments
 from agent_system.tools.registry import ToolRegistry
 from agent_system.tools.schemas import ToolSchema
@@ -73,6 +73,7 @@ class AgentReasoner:
         plan: Plan,
         critique: Critique | None = None,
         tool_results: list[ToolResult],
+        step_results: list[StepResult] | None = None,
         iteration: int,
     ) -> AgentAction:
         messages = self._messages(
@@ -81,6 +82,7 @@ class AgentReasoner:
             plan=plan,
             critique=critique,
             tool_results=tool_results,
+            step_results=step_results or [],
             iteration=iteration,
         )
         try:
@@ -151,6 +153,7 @@ class AgentReasoner:
         plan: Plan,
         critique: Critique | None,
         tool_results: list[ToolResult],
+        step_results: list[StepResult],
         iteration: int,
     ) -> list[ChatMessage]:
         tool_schemas = json.dumps(
@@ -176,6 +179,11 @@ class AgentReasoner:
                     "If a tool result reports a validation or execution error, use that observation to revise the next tool call or ask the user. "
                     "For unknown-tool observations, choose one of the available registered tools exactly from available_tools. "
                     "For validation errors, fix the arguments according to required_args and input_schema. "
+                    "If a step failed with unknown_tool, choose an exact registered tool name from available_tools or registered tool definitions. "
+                    "If a step failed with validation_failed, fix the arguments according to input_schema and required_args. "
+                    "If a step is blocked by dependency_failed, decide whether to replan or ask the user. "
+                    "If a step has no_executable_tool, decide whether the request can be answered without tools or select concrete registered tool calls. "
+                    "Do not repeat the same invalid tool call. "
                     "Never return action=tool_calls with empty tool_calls. "
                     "If the request cannot be completed safely or needs clarification, set action=ask_user and needs_user_input. "
                     "Do not invent filesystem contents, command output, or tool results."
@@ -203,10 +211,27 @@ class AgentReasoner:
                     f"Current user request:\n{request.content}\n\n"
                     f"Current plan:\n{plan.model_dump_json(indent=2)}\n\n"
                     f"Reflector critique:\n{critique.model_dump_json(indent=2) if critique else '(none)'}\n\n"
+                    f"Execution step results:\n{self._step_result_observation(step_results)}\n\n"
                     f"Tool observations:\n{self._tool_observation(tool_results)}"
                 ),
             ),
         ]
+
+    def _step_result_observation(self, step_results: list[StepResult]) -> str:
+        return json.dumps(
+            [
+                {
+                    "step_id": result.step_id,
+                    "ok": result.ok,
+                    "status": result.status,
+                    "error_type": result.error_type,
+                    "summary": result.summary,
+                }
+                for result in step_results
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
 
     def _tool_observation(self, tool_results: list[ToolResult]) -> str:
         payload = json.dumps(

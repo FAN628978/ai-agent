@@ -97,6 +97,7 @@ def test_agent_state_defaults_and_json_roundtrip() -> None:
     assert dumped["mode"] == "act"
     assert dumped["completed_steps"] == ["step-1"]
     assert loaded.completed_steps == {"step-1"}
+    assert loaded.step_results == []
     assert loaded.iteration == 0
     assert loaded.max_iterations == 20
 

@@ -86,6 +86,7 @@ class AgentRuntime:
             await self.checkpoints.save(state)
 
             execution = await self.executor.execute(state.plan, state)
+            state.step_results.extend(execution.step_results)
             state.tool_results.extend(execution.tool_results)
             execution_data = execution.summary()
             execution_data["tool_results"] = [
@@ -167,6 +168,7 @@ class AgentRuntime:
                         plan=state.plan,
                         critique=critique,
                         tool_results=state.tool_results,
+                        step_results=state.step_results,
                         iteration=state.iteration,
                     )
                 except Exception as exc:
