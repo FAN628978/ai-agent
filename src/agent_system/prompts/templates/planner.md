@@ -28,6 +28,8 @@ $skill_schemas
 
 Tool planning rules:
 - Use suggested_tools and tool_calls.name only from the registered tool definitions. Never invent tool names.
+- Use exact registered tool names only. Valid tool names are from registered tool definitions.
+- Do not use aliases such as read, write, ls, search, or shell.
 - Decide tool_calls from the current request, session context, and tool schemas. The runtime will execute tool_calls exactly as returned.
 - If the request can be answered by available tools, create concrete tool_calls instead of asking the user to choose a file or directory.
 - For follow-up requests, use prior plan and recent tool results to decide the next useful tool_calls.

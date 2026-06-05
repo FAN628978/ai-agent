@@ -8,38 +8,9 @@ from pydantic import BaseModel, Field
 
 from agent_system.llm import ChatMessage
 from agent_system.models import Critique, Plan, ToolCall, ToolResult, UserRequest
+from agent_system.tools.normalization import clean_tool_name, normalize_tool_arguments
 from agent_system.tools.registry import ToolRegistry
 from agent_system.tools.schemas import ToolSchema
-
-
-TOOL_NAME_ALIASES = {
-    "read": "Read",
-    "file.read": "Read",
-    "write": "Write",
-    "file.write": "Write",
-    "edit": "Edit",
-    "file.edit": "Edit",
-    "grep": "Grep",
-    "search": "Grep",
-    "glob": "Glob",
-    "dirlist": "Glob",
-    "dir.list": "Glob",
-    "directorylist": "Glob",
-    "directory.list": "Glob",
-    "listdir": "Glob",
-    "list.dir": "Glob",
-    "listfiles": "Glob",
-    "list.files": "Glob",
-    "filelist": "Glob",
-    "file.list": "Glob",
-    "findfiles": "Glob",
-    "find.files": "Glob",
-    "list": "Glob",
-    "ls": "Glob",
-    "bash": "Bash",
-    "shell": "Bash",
-    "command": "Bash",
-}
 
 
 class ReasonerLLMClient(Protocol):
@@ -156,7 +127,8 @@ class AgentReasoner:
                     "Return exactly one JSON object with keys action, thought, tool_calls, final_answer, "
                     "needs_user_input, and replan_reason. "
                     "Set action to one of: tool_calls, ask_user, replan, final. "
-                    "Use only registered tool names from the registered tool definitions. "
+                    "Use exact registered tool names only from the registered tool definitions. "
+                    "Do not use aliases such as read, write, ls, search, or shell. "
                     "Do not include markdown or explanatory text outside the JSON object."
                 ),
             ),
@@ -194,13 +166,15 @@ class AgentReasoner:
                     "Use the plan, Reflector critique, and tool observations to decide the next action. "
                     "Return exactly one JSON object and no markdown. "
                     "Set action to exactly one of: tool_calls, ask_user, replan, final. "
-                    "Use only registered tool names from the registered tool definitions. "
+                    "Tool names must exactly match registered tool definitions. "
+                    "Use exact registered tool names only from the registered tool definitions. "
+                    "Do not use aliases such as read, write, ls, search, or shell. "
                     "Never invent tool names. "
                     "If the user's request is solved, set action=final and final_answer to the user-facing answer. "
                     "If more workspace evidence is needed, set action=tool_calls and tool_calls to concrete calls using the registered tools. "
                     "If the plan is unsuitable, set action=replan and explain replan_reason. "
                     "If a tool result reports a validation or execution error, use that observation to revise the next tool call or ask the user. "
-                    "For unknown-tool observations, choose a registered tool from available_tools. "
+                    "For unknown-tool observations, choose one of the available registered tools exactly from available_tools. "
                     "For validation errors, fix the arguments according to required_args and input_schema. "
                     "Never return action=tool_calls with empty tool_calls. "
                     "If the request cannot be completed safely or needs clarification, set action=ask_user and needs_user_input. "
@@ -399,24 +373,11 @@ class AgentReasoner:
 
 
 def _normalize_tool_name(value: object) -> str:
-    name = str(value).strip()
-    if not name:
-        return ""
-    return TOOL_NAME_ALIASES.get(name.lower(), name)
+    return clean_tool_name(value)
 
 
 def _normalize_tool_arguments(name: str, arguments: dict[str, object]) -> dict[str, object]:
-    normalized = dict(arguments)
-    if name in {"Read", "Write", "Edit", "Grep", "Glob"} and "path" not in normalized:
-        for alias in ("file_path", "filepath", "dir", "directory"):
-            if alias in normalized:
-                normalized["path"] = normalized.pop(alias)
-                break
-    if name == "Glob":
-        normalized.setdefault("path", ".")
-    if name == "Grep":
-        normalized.setdefault("path", ".")
-    return normalized
+    return normalize_tool_arguments(name, arguments)
 
 
 def _fallback_answer(request: UserRequest, tool_results: list[ToolResult]) -> str:

@@ -541,7 +541,7 @@ def test_planner_normalizes_llm_tool_calls() -> None:
     assert plan.steps[0].tool_calls[0].arguments == {"path": "README.md"}
 
 
-def test_planner_normalizes_common_tool_call_shape_and_aliases() -> None:
+def test_planner_normalizes_common_tool_call_shape_without_aliases() -> None:
     client = FakeLLMClient(
         """
         {
@@ -572,6 +572,6 @@ def test_planner_normalizes_common_tool_call_shape_and_aliases() -> None:
 
     plan = asyncio.run(planner.make_plan(make_request("桌面有什么")))
 
-    assert plan.steps[0].suggested_tools == ["Bash"]
-    assert plan.steps[0].tool_calls[0].name == "Bash"
+    assert plan.steps[0].suggested_tools == ["shell"]
+    assert plan.steps[0].tool_calls[0].name == "shell"
     assert plan.steps[0].tool_calls[0].arguments == {"command": "ls ~/Desktop"}

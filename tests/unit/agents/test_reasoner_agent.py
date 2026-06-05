@@ -69,7 +69,7 @@ def make_plan() -> Plan:
     )
 
 
-def test_reasoner_normalizes_tool_alias_without_task_rewrite() -> None:
+def test_reasoner_preserves_non_registered_tool_name_for_router_observation() -> None:
     client = FakeLLMClient(
         """
         {
@@ -94,8 +94,8 @@ def test_reasoner_normalizes_tool_alias_without_task_rewrite() -> None:
         )
     )
 
-    assert action.tool_calls[0].name == "Glob"
-    assert action.tool_calls[0].arguments == {"path": "."}
+    assert action.tool_calls[0].name == "DirList"
+    assert action.tool_calls[0].arguments == {}
 
 
 def test_reasoner_preserves_invalid_tool_arguments_for_router_observation() -> None:

@@ -5,33 +5,9 @@ from typing import Any
 
 from agent_system.models import ToolCall, ToolResult
 from agent_system.tools.base import ToolContext, Workspace
+from agent_system.tools.normalization import clean_tool_name, normalize_tool_arguments
 from agent_system.tools.registry import ToolRegistry
 from agent_system.tools.schemas import ToolPermissionDecision, ToolPermissionPolicy
-
-
-TOOL_NAME_ALIASES = {
-    "dirlist": "Glob",
-    "dir.list": "Glob",
-    "directorylist": "Glob",
-    "directory.list": "Glob",
-    "listdir": "Glob",
-    "list.dir": "Glob",
-    "listfiles": "Glob",
-    "list.files": "Glob",
-    "filelist": "Glob",
-    "file.list": "Glob",
-    "findfiles": "Glob",
-    "find.files": "Glob",
-    "ls": "Glob",
-    "list": "Glob",
-    "readfile": "Read",
-    "file.read": "Read",
-    "writefile": "Write",
-    "file.write": "Write",
-    "search": "Grep",
-    "shell": "Bash",
-    "bash": "Bash",
-}
 
 
 class ToolRouter:
@@ -192,25 +168,11 @@ def _summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_call(call: ToolCall) -> ToolCall:
-    name = TOOL_NAME_ALIASES.get(call.name.strip().lower(), call.name)
-    arguments = _normalize_arguments(name, call.arguments)
+    name = clean_tool_name(call.name)
+    arguments = normalize_tool_arguments(name, call.arguments)
     if name == call.name and arguments == call.arguments:
         return call
     return call.model_copy(update={"name": name, "arguments": arguments})
-
-
-def _normalize_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(arguments)
-    if name in {"Read", "Write", "Edit", "Grep", "Glob"} and "path" not in normalized:
-        for alias in ("file_path", "filepath", "dir", "directory"):
-            if alias in normalized:
-                normalized["path"] = normalized.pop(alias)
-                break
-    if name == "Glob":
-        normalized.setdefault("path", ".")
-    if name == "Grep":
-        normalized.setdefault("path", ".")
-    return normalized
 
 
 def _available_tools(registry: ToolRegistry) -> list[dict[str, Any]]:

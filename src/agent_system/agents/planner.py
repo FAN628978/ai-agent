@@ -6,36 +6,7 @@ from typing import Protocol
 from agent_system.context import ContextAssembler
 from agent_system.llm import ChatMessage
 from agent_system.models import Plan, RunMode, Step, ToolCall, UserRequest
-
-
-TOOL_NAME_ALIASES = {
-    "read": "Read",
-    "file.read": "Read",
-    "write": "Write",
-    "file.write": "Write",
-    "edit": "Edit",
-    "file.edit": "Edit",
-    "grep": "Grep",
-    "search": "Grep",
-    "glob": "Glob",
-    "dirlist": "Glob",
-    "dir.list": "Glob",
-    "directorylist": "Glob",
-    "directory.list": "Glob",
-    "listdir": "Glob",
-    "list.dir": "Glob",
-    "listfiles": "Glob",
-    "list.files": "Glob",
-    "filelist": "Glob",
-    "file.list": "Glob",
-    "findfiles": "Glob",
-    "find.files": "Glob",
-    "list": "Glob",
-    "ls": "Glob",
-    "bash": "Bash",
-    "shell": "Bash",
-    "command": "Bash",
-}
+from agent_system.tools.normalization import clean_tool_name, normalize_tool_arguments
 
 
 class PlannerLLMClient(Protocol):
@@ -144,6 +115,8 @@ class PlannerAgent:
                     "or workspace observation, return a revised JSON plan with concrete tool_calls. "
                     "Use the plan keys task_goal, steps, expected_outputs, constraints, success_criteria, assumptions, and risks. "
                     "Choose tool names and arguments only from the registered tool definitions and their input_schema. "
+                    "Use exact registered tool names only. Valid tool names are from registered tool definitions. "
+                    "Do not use aliases such as read, write, ls, search, or shell. "
                     "Use each tool's description, required_arguments, and optional_arguments to decide whether it fits. "
                     "For named locations outside the workspace, ask for clarification instead of inventing access. "
                     "If no tool is needed, return a JSON plan with empty suggested_tools and tool_calls. "
@@ -273,23 +246,10 @@ class PlannerAgent:
         return normalized_calls
 
     def _normalize_tool_name(self, value: object) -> str:
-        name = str(value).strip()
-        if not name:
-            return ""
-        return TOOL_NAME_ALIASES.get(name.lower(), name)
+        return clean_tool_name(value)
 
     def _normalize_tool_arguments(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
-        normalized = dict(arguments)
-        if name in {"Read", "Write", "Edit", "Grep", "Glob"} and "path" not in normalized:
-            for alias in ("file_path", "filepath", "dir", "directory"):
-                if alias in normalized:
-                    normalized["path"] = normalized.pop(alias)
-                    break
-        if name == "Glob":
-            normalized.setdefault("path", ".")
-        if name == "Grep":
-            normalized.setdefault("path", ".")
-        return normalized
+        return normalize_tool_arguments(name, arguments)
 
     def _normalize_native_tool_calls(self, value: object) -> list[ToolCall]:
         if not isinstance(value, list):

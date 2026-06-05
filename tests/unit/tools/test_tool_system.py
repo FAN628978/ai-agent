@@ -229,8 +229,7 @@ def test_glob_tool_finds_paths(tmp_path) -> None:
     assert result.content["matches"][0]["relative_path"] == "src/app.py"
 
 
-def test_router_normalizes_dirlist_alias_to_glob(tmp_path) -> None:
-    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+def test_router_returns_unknown_for_dirlist_alias(tmp_path) -> None:
     registry = ToolRegistry()
     registry.register(GlobTool())
     router = ToolRouter(registry, tmp_path)
@@ -245,14 +244,13 @@ def test_router_normalizes_dirlist_alias_to_glob(tmp_path) -> None:
         )
     )
 
-    assert result.ok is True
-    assert result.name == "Glob"
-    assert result.content["pattern"] == "*"
-    assert any(entry["relative_path"] == "README.md" for entry in result.content["matches"])
+    assert result.ok is False
+    assert result.error == "unknown tool: DirList"
+    assert result.name == "DirList"
+    assert result.content["available_tools"] == ["Glob"]
 
 
-def test_router_normalizes_file_listing_alias_to_glob(tmp_path) -> None:
-    (tmp_path / "README.md").write_text("hello", encoding="utf-8")
+def test_router_returns_unknown_for_file_listing_alias(tmp_path) -> None:
     registry = ToolRegistry()
     registry.register(GlobTool())
     router = ToolRouter(registry, tmp_path)
@@ -267,9 +265,10 @@ def test_router_normalizes_file_listing_alias_to_glob(tmp_path) -> None:
         )
     )
 
-    assert result.ok is True
-    assert result.name == "Glob"
-    assert any(entry["relative_path"] == "README.md" for entry in result.content["matches"])
+    assert result.ok is False
+    assert result.error == "unknown tool: ListFiles"
+    assert result.name == "ListFiles"
+    assert result.content["available_tools"] == ["Glob"]
 
 
 def test_glob_tool_can_list_absolute_path_under_read_root(tmp_path, monkeypatch) -> None:
@@ -287,7 +286,7 @@ def test_glob_tool_can_list_absolute_path_under_read_root(tmp_path, monkeypatch)
         router.invoke(
             ToolCall(
                 id="glob-absolute-1",
-                name="DirList",
+                name="Glob",
                 arguments={"path": str(readable)},
             )
         )
