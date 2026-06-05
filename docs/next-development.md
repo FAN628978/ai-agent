@@ -1,6 +1,6 @@
 # 下一步开发建议：审批续跑、持久化 Session 与 LLM Reflector
 
-> 状态更新：Runtime 多轮 session 基础能力已经完成，包括 `SessionRecord`、`InMemorySessionStore`、Runtime 写回 session、Context 注入 session summary，以及 `runtime-chat` 使用固定 `session_id` 调用 Runtime。本文档已从“新增 Session Store”调整为“完善审批续跑、持久化 session、LLM Reflector 和可观测恢复”。
+> 状态更新：Runtime 多轮 session 基础能力已经完成，包括 `SessionRecord`、`InMemorySessionStore`、Runtime 写回 session、Context 注入 session summary，以及 `runtime-chat` 使用固定 `session_id` 调用 Runtime。文档已同步到当前代码状态，下一步重点是审批续跑、持久化 session、LLM Reflector 和可观测恢复。
 
 ## 当前阶段结论
 
@@ -15,7 +15,7 @@
 当前已具备：
 
 - `AgentRuntime` 主循环。
-- `PlannerAgent` 基于 OpenAI-compatible LLM 生成结构化计划。
+- `PlannerAgent` 基于 OpenAI-compatible LLM 生成结构化计划，并保留保守规则兜底。
 - `Executor` 顺序执行 `Plan.steps`。
 - `ToolRouter` 统一路由工具调用。
 - `Read`、`Write`、`Edit`、`Grep`、`Glob`、`Bash` 六个核心工具。
@@ -60,6 +60,35 @@ session_context=session.context_summary()
 Runtime 在结束、等待审批、需要用户输入、停止等路径上会写回 session。
 
 因此，下一步不应该重复实现内存版 Session，而应该围绕“恢复、持久化、审批续跑、反思判断”继续开发。
+
+## 当前权限现状
+
+当前 `configs/default.yaml` 为本地开发便利，权限配置较开放：
+
+```yaml
+permissions:
+  default_shell: allow
+  workspace_write: allow
+  network: allow
+  destructive_commands: allow
+```
+
+这意味着：
+
+- `Bash` 默认启用。
+- 普通 shell 命令在默认配置下可以直接执行。
+- workspace 写入在默认配置下可以直接执行。
+- destructive command 当前也配置为 `allow`。
+
+虽然 `ToolRouter` 已支持 `ask` / `deny` 策略，并且能产生 `run.waiting_for_tool_approval`，但默认配置本身偏开放。因此后续做审批续跑时，应同时补充更安全的推荐配置，例如：
+
+```yaml
+permissions:
+  default_shell: ask
+  workspace_write: ask
+  network: deny
+  destructive_commands: ask
+```
 
 ## 当前主要不足
 
@@ -144,28 +173,25 @@ P8：Web UI / Streaming
 
 ## P0：文档同步和状态确认
 
-状态：当前文档更新目标。
+状态：已完成第一轮同步。
 
-目标：
-
-- 文档与代码现状保持一致。
-- 明确 Session 第一版已经完成。
-- 后续计划从“新增 Session Store”转为“持久化与恢复”。
-- 避免后续开发重复实现已存在模块。
-
-建议检查并同步：
+已同步：
 
 - `README.md`
+- `docs/README.md`
 - `docs/project-status.md`
 - `docs/codebase-guide.md`
-- `docs/development-plan.md`
 - `docs/next-development.md`
 
-验收标准：
+同步重点：
 
 - 文档不再把 `SessionRecord` / `InMemorySessionStore` 描述为未实现。
-- 文档明确下一步重点是审批续跑、持久化 session、LLM Reflector。
-- 新开发者能通过文档准确理解当前实现状态。
+- 文档明确 Planner 有规则兜底。
+- 文档明确 Reasoner 已经接入 Runtime 工厂。
+- 文档明确 ToolRouter 权限检查和审批事件已经接入。
+- 文档明确当前默认权限为 `allow`，不再误写为 Bash 默认禁用或默认 deny。
+
+后续如果继续改代码，应同步更新上述文档。
 
 ## P1：工具审批后的继续执行
 
@@ -227,7 +253,7 @@ pending_tool_approvals: list[PendingToolApproval] = Field(default_factory=list)
 验收标准：
 
 - `run.waiting_for_tool_approval` 不再是终点，而是可恢复中间状态。
-- `Bash` 等高风险工具默认仍受控。
+- 把 `permissions.default_shell=ask`、`workspace_write=ask` 等场景纳入测试。
 - 所有审批动作可审计。
 
 ## P2：SQLite SessionStore / CheckpointStore
@@ -505,6 +531,12 @@ agent-system replay <task_id>
 
 ```text
 为工具执行结果增加 validation_failed、unknown_tool、permission_denied、approval_required、execution_failed、empty_result、blocked 等分类。
+```
+
+### Task 5：补充安全默认配置示例
+
+```text
+新增一个 configs/safe.yaml 或 docs/security.md，推荐 default_shell=ask、workspace_write=ask、network=deny、destructive_commands=ask。
 ```
 
 ## 非目标
