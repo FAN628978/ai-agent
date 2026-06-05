@@ -1,4 +1,4 @@
-﻿# 项目说明与进展
+# 项目说明与进展
 
 ## 项目概览
 
@@ -7,10 +7,12 @@
 当前设计参考 Claude Code、Codex、Cursor Agent 等现代 Agent 产品的公开设计思想，核心形态是：
 
 ```text
-用户请求 -> 上下文组装 -> Planner 生成计划 -> Executor 执行工具 -> Reflector 校验结果 -> 输出响应
+用户请求 -> 上下文组装 -> Planner 生成计划 -> Executor 执行工具 -> Reasoner/Reflector 判断下一步 -> 输出响应 -> 写回 Session
 ```
 
-项目当前仍处于早期工程化阶段，已完成基础 Python 工程骨架、核心数据模型、最小 Runtime 主循环、本地 MiniMax 2.5 Planner / Chat LLM 接入、ChatGPT 式 CLI、Runtime 对话入口、工具系统到 Runtime Executor 的接入、结构化 ToolCall 执行、Prompt Registry / Planner Context 组装，以及 Skills 模块。当前还没有实现多 Agent 能力或 LLM 驱动的 Reflector / Executor。
+当前项目已经从“最小工程骨架”推进到“可运行的单 Agent Runtime 原型”阶段。代码中已经具备 Runtime 主循环、OpenAI-compatible MiniMax 接入、工具系统、结构化 ToolCall、Prompt / Context / Skills 注入、AgentReasoner、内存 Session、内存 Checkpoint、JSONL 事件日志和 CLI 对话入口。
+
+当前还没有完成：审批后的继续执行、持久化 Session / Checkpoint、LLM Reflector、Executor 依赖排序和失败分类、多 Agent、MCP、Web UI。
 
 ## 重要文档
 
@@ -18,69 +20,98 @@
 | --- | --- |
 | `docs/README.md` | 文档索引和推荐阅读顺序 |
 | `docs/codebase-guide.md` | 当前代码结构、运行链路、模块职责和扩展点 |
-| `docs/architecture.md` | 完整架构设计方案，包含模块划分、数据模型示例、Runtime 流程、工具系统、Memory、Context、权限、可观测等设计 |
-| `docs/development-plan.md` | 分阶段开发计划，从项目初始化到 Runtime、工具系统、CLI、Context、LLM、可观测 |
-| `docs/next-development.md` | 下一步开发建议：Runtime 多轮任务状态 |
+| `docs/architecture.md` | 完整架构设计方案，包含部分尚未实现的目标设计 |
+| `docs/development-plan.md` | 分阶段开发计划，偏长期路线 |
+| `docs/next-development.md` | 下一步开发建议：审批续跑、持久化 Session 与 LLM Reflector |
 | `docs/project-status.md` | 当前项目状态和交接说明，供后续 Agent 快速接手 |
-| `README.md` | 项目简介、安装方式、测试命令 |
+| `README.md` | 项目简介、安装方式、CLI 使用方式 |
+| `AGENTS.md` | 开发偏好、代码修改原则、后续 agent 接手规则 |
 
 ## 当前目录结构
 
 ```text
 .
+├── README.md
+├── AGENTS.md
+├── configs/
+│   └── default.yaml
 ├── docs/
 │   ├── README.md
 │   ├── architecture.md
 │   ├── development-plan.md
 │   ├── next-development.md
+│   ├── codebase-guide.md
 │   └── project-status.md
-├── README.md
-├── configs/
-│   └── default.yaml
 ├── pyproject.toml
 ├── src/
 │   └── agent_system/
 │       ├── __init__.py
-│       ├── api/
-│       │   ├── __init__.py
-│       │   └── cli.py
 │       ├── agents/
 │       │   ├── __init__.py
 │       │   ├── planner.py
+│       │   ├── reasoner.py
 │       │   └── reflector.py
+│       ├── api/
+│       │   ├── __init__.py
+│       │   └── cli.py
+│       ├── config/
+│       │   ├── __init__.py
+│       │   ├── loader.py
+│       │   └── models.py
+│       ├── context/
+│       │   ├── __init__.py
+│       │   ├── assembler.py
+│       │   └── budget.py
 │       ├── execution/
 │       │   ├── __init__.py
 │       │   └── executor.py
 │       ├── llm/
 │       │   ├── __init__.py
 │       │   └── client.py
-│       └── models/
+│       ├── models/
+│       │   ├── __init__.py
+│       │   ├── events.py
+│       │   ├── planning.py
+│       │   ├── request.py
+│       │   ├── runtime.py
+│       │   └── tools.py
+│       ├── observability/
+│       │   ├── __init__.py
+│       │   └── logging.py
+│       ├── prompts/
+│       │   ├── __init__.py
+│       │   ├── registry.py
+│       │   └── templates/
+│       ├── runtime/
+│       │   ├── __init__.py
+│       │   ├── checkpoint.py
+│       │   ├── factory.py
+│       │   ├── loop.py
+│       │   └── session.py
+│       ├── skills/
+│       │   ├── __init__.py
+│       │   ├── builtin.py
+│       │   ├── registry.py
+│       │   └── schemas.py
+│       └── tools/
 │           ├── __init__.py
-│           ├── events.py
-│           ├── planning.py
-│           ├── request.py
-│           ├── runtime.py
-│           └── tools.py
-│       └── runtime/
-│           ├── __init__.py
-│           ├── checkpoint.py
-│           └── loop.py
+│           ├── base.py
+│           ├── registry.py
+│           ├── router.py
+│           ├── schemas.py
+│           └── builtin/
+│               ├── __init__.py
+│               ├── file.py
+│               ├── glob.py
+│               ├── grep.py
+│               └── shell.py
 └── tests/
     ├── test_import.py
+    ├── integration/
     └── unit/
-        ├── api/
-        │   └── test_cli.py
-        ├── llm/
-        │   └── test_openai_compatible_client.py
-        ├── models/
-        │   └── test_core_models.py
-        └── runtime/
-            └── test_runtime_loop.py
-    └── integration/
-        └── test_minimax_local.py
 ```
 
-## 已完成进展
+## 当前已完成能力
 
 ### Phase 0：项目初始化
 
@@ -97,30 +128,13 @@
 
 影响范围：
 
-- 项目已经具备标准 Python 包结构。
-- 可以使用 `uv run pytest` 执行测试。
-- 当前测试只验证包可以正常导入。
-
-验证结果：
-
-```text
-uv run pytest
-50 passed, 2 skipped
-```
+- 项目具备标准 Python 包结构。
+- CLI 入口通过 `pyproject.toml` 暴露为 `agent-system`。
+- 可使用 `pytest` 或 `uv run pytest` 执行测试。
 
 ### Phase 1：核心数据模型
 
 状态：已完成。
-
-已交付：
-
-- `src/agent_system/models/request.py`
-- `src/agent_system/models/planning.py`
-- `src/agent_system/models/tools.py`
-- `src/agent_system/models/runtime.py`
-- `src/agent_system/models/events.py`
-- `src/agent_system/models/__init__.py`
-- `tests/unit/models/test_core_models.py`
 
 已实现模型：
 
@@ -134,159 +148,133 @@ uv run pytest
 - `AgentState`
 - `AgentEvent`
 
-影响范围：
+关键说明：
 
-- 项目已经具备 Runtime、工具系统和 LLM 接入所需的基础协议模型。
-- 模型字段参考 `docs/architecture.md` 中的核心数据模型示例。
-- 当前只实现数据模型和测试，没有实现 Runtime 执行逻辑。
-
-验证结果：
-
-```text
-uv run pytest
-50 passed, 2 skipped
-```
+- `RunMode` 当前支持 `ask`、`plan`、`act`、`review`、`background`。
+- `Step` 已包含 `depends_on`，但 Executor 还没有真正做依赖排序。
+- `ToolCall` 已包含 `requires_approval` 和 `approved`，但审批后的继续执行闭环还未完成。
 
 ### Phase 2：Runtime 主循环
 
-状态：已完成。
+状态：已完成第一版。
 
 已交付：
 
 - `src/agent_system/runtime/loop.py`
 - `src/agent_system/runtime/checkpoint.py`
-- `src/agent_system/runtime/__init__.py`
+- `src/agent_system/runtime/factory.py`
 - `src/agent_system/agents/planner.py`
+- `src/agent_system/agents/reasoner.py`
 - `src/agent_system/agents/reflector.py`
-- `src/agent_system/agents/__init__.py`
 - `src/agent_system/execution/executor.py`
-- `src/agent_system/execution/__init__.py`
-- `tests/unit/runtime/test_runtime_loop.py`
 
 已实现：
 
 - `AgentRuntime`
 - LLM 驱动 `PlannerAgent`
+- Planner 失败后的保守规则兜底
 - 顺序执行版 `Executor`
-- 简化版 `Reflector`
+- 简化规则版 `Reflector`
+- 观察后决策的 `AgentReasoner`
 - 内存版 `InMemoryCheckpointStore`
 - 执行结果模型 `StepResult` 和 `ExecutionResult`
 
-影响范围：
+Runtime 当前事件流包括：
 
-- 一个 `UserRequest` 已经可以跑完整 ACT 模式生命周期。
-- PLAN 模式会在生成计划后输出 `run.waiting_for_approval` 并停止。
-- Runtime 当前只使用 mock step 执行结果，不调用真实工具或真实 LLM。
+- `run.started`
+- `plan.created`
+- `run.waiting_for_approval`
+- `execution.completed`
+- `run.waiting_for_tool_approval`
+- `reasoning.completed`
+- `answer.created`
+- `reflection.completed`
+- `run.completed`
+- `run.needs_user_input`
+- `run.stopped`
 
-验证结果：
+关键说明：
 
-```text
-uv run pytest
-50 passed, 2 skipped
-```
+- ACT 模式会执行 plan。
+- PLAN 模式会在 `plan.created` 后输出 `run.waiting_for_approval` 并停止。
+- Runtime 会读取 session，并把 `session.context_summary()` 传给 Planner / Reasoner。
+- Runtime 在完成、停止、需要用户输入、等待审批等路径会写回 session。
+- 如果配置了 `reasoner`，Runtime 会优先通过 Reasoner 根据工具观察继续决策或生成最终回答。
+- 如果没有 Reasoner，则使用 Reflector 判断是否完成。
 
 ### ChatGPT 式 CLI
 
-状态：已完成。
+状态：已完成第一版。
 
 已交付：
 
 - `src/agent_system/api/cli.py`
-- `src/agent_system/api/__init__.py`
-- `tests/unit/api/test_cli.py`
 - `pyproject.toml` 中的 `agent-system` 命令入口
 
 已支持命令：
 
 - `agent-system run "任务内容"`
 - `agent-system plan "任务内容"`
-- `agent-system chat`
 - `agent-system runtime-chat`
 
-常用参数：
+当前 `runtime-chat` 支持斜杠命令：
 
-- `--config configs/default.yaml`
-- `--json`
-- `--user-id`
-- `--workspace-id`
+- `/help`
+- `/clear`
+- `/tools`
+- `/exit`
+- `/quit`
 
-影响范围：
+说明：
 
-- 可以从命令行调用当前 Runtime。
-- 默认使用 `configs/default.yaml` 中配置的 MiniMax Planner。
-- `agent-system chat` 会直接调用 `model.chat`，保留当前会话上下文历史，并只输出 Assistant 回复。
-- `agent-system chat` 默认隐藏 `<think>...</think>` 内容，可用 `--show-reasoning` 显示。
-- `agent-system runtime-chat` 每轮都会经过 `AgentRuntime`，再把事件和工具结果整理成 Assistant 回复。
-- 当前 Executor 已能执行 LLM Planner 产出的结构化 `tool_calls`；没有可执行工具的步骤不会被模拟完成，会进入需要补充信息的失败路径。
+- `runtime-chat` 每轮都会创建 `UserRequest` 并调用 `AgentRuntime`。
+- `runtime-chat` 使用固定 `session_id`，Runtime 内部可以保存多轮 session 状态。
+- CLI 仍维护一份本地 `history`，用于最终回复合成。
+- 目前没有 `/approve`、`/deny`、`/resume`。
 
-验证结果：
-
-```text
-uv run pytest
-50 passed, 2 skipped
-
-uv run agent-system plan "为项目生成一个下一步开发计划" --json
-成功通过 MiniMax 生成 plan.created 事件
-```
-
-### 本地 MiniMax 2.5 接入
+### 本地 MiniMax / OpenAI-compatible 接入
 
 状态：已接入默认配置和 Runtime 工厂。
 
-本地服务：
+默认服务：
 
 ```text
 http://localhost:8500
 ```
 
-已探测接口：
-
-- `GET /v1/models`
-- `POST /v1/chat/completions`
-
-已确认模型：
+默认模型：
 
 ```text
 MiniMax-M2.5
 ```
 
-已交付：
+已实现：
 
-- `configs/default.yaml` 中的 MiniMax 配置
-- `src/agent_system/config/models.py`
-- `src/agent_system/config/loader.py`
-- `src/agent_system/config/__init__.py`
-- `src/agent_system/llm/client.py`
-- `src/agent_system/llm/__init__.py`
-- `src/agent_system/runtime/factory.py`
-- `tests/unit/config/test_config_loader.py`
-- `tests/unit/runtime/test_runtime_factory.py`
-- `tests/unit/agents/test_planner_agent.py`
-- `tests/unit/llm/test_openai_compatible_client.py`
-- `tests/integration/test_minimax_local.py`
-- `tests/integration/test_minimax_runtime.py`
+- `OpenAICompatibleClient.list_models()` 调用 `/v1/models`。
+- `OpenAICompatibleClient.chat()` 调用 `/v1/chat/completions`。
+- 支持传入原生 OpenAI-compatible `tools` 字段。
+- 支持读取 `message.tool_calls`。
 
-影响范围：
+默认配置重点：
 
-- 新增一个最小 OpenAI-compatible LLM client。
-- `configs/default.yaml` 默认指向 `http://localhost:8500` 和 `MiniMax-M2.5`。
-- `create_runtime_from_config()` 会按配置创建带 LLM client 的 `PlannerAgent`。
-- `PlannerAgent` 使用 LLM 生成 `Plan` 和结构化 `tool_calls`，不再提供规则 Planner 模式。
-- 默认 `uv run pytest` 会跳过真实本地服务测试，避免未启动本地模型时失败。
-
-验证结果：
-
-```text
-uv run pytest
-50 passed, 2 skipped
-
-AGENT_SYSTEM_RUN_LOCAL_LLM_TESTS=1 uv run pytest tests/integration
-2 passed
+```yaml
+model:
+  provider: openai-compatible
+  base_url: http://localhost:8500
+  chat: MiniMax-M2.5
+  planner: MiniMax-M2.5
+  executor: MiniMax-M2.5
+  reflector: MiniMax-M2.5
+  timeout_s: 30
+  max_tokens: 100000
+  temperature: 0.7
 ```
+
+注意：`reflector` 模型字段已存在于配置，但当前 `Reflector` 还没有使用 LLM。
 
 ### Phase 3：工具系统
 
-状态：已完成。
+状态：已完成第一版。
 
 已交付：
 
@@ -294,18 +282,18 @@ AGENT_SYSTEM_RUN_LOCAL_LLM_TESTS=1 uv run pytest tests/integration
 - `src/agent_system/tools/schemas.py`
 - `src/agent_system/tools/registry.py`
 - `src/agent_system/tools/router.py`
-- `src/agent_system/tools/__init__.py`
 - `src/agent_system/tools/builtin/file.py`
 - `src/agent_system/tools/builtin/grep.py`
+- `src/agent_system/tools/builtin/glob.py`
 - `src/agent_system/tools/builtin/shell.py`
-- `src/agent_system/tools/builtin/__init__.py`
-- `tests/unit/tools/test_tool_system.py`
 
 已实现：
 
 - `BaseTool`
 - `ToolSchema`
 - `ToolPermission`
+- `ToolPermissionPolicy`
+- `ToolPermissionDecision`
 - `ToolRegistry`
 - `ToolRouter`
 - `Workspace`
@@ -321,277 +309,203 @@ AGENT_SYSTEM_RUN_LOCAL_LLM_TESTS=1 uv run pytest tests/integration
 
 - 工具可以注册、查询和调用。
 - 工具统一返回 `ToolResult`。
-- 文件工具限制在 workspace 内，阻止路径越界。
-- `Edit` 支持替换已有文件中的文本。
-- `Grep` 支持正则搜索文本文件。
-- `Glob` 支持按路径模式查找文件或目录。
-- `Bash` 默认禁用，显式启用后支持超时、stdout、stderr 和 returncode。
-- 当前工具系统已接入 `Executor` 的保守路径；只有 Step 明确列出内置工具名时才会调用工具。
+- 工具名会做常见别名归一化。
+- 工具输入会根据 schema required 字段做基础校验。
+- 未知工具会返回可观察错误，并附带 available_tools / tool_definitions，方便 Reasoner 修复。
+- 输入校验失败会返回 required_args / input_schema，方便 Reasoner 修复。
+- 权限检查已经接入 `ToolRouter`。
+- 需要审批时会返回 `approval_required` 工具结果。
+- 审计 metadata 已包含 call_id、tool、arguments_summary、status 和 permission decision。
 
-验证结果：
+### 文件与 Shell 权限现状
 
-```text
-uv run pytest
-50 passed, 2 skipped
+当前 `configs/default.yaml` 中：
+
+```yaml
+permissions:
+  default_shell: allow
+  workspace_write: allow
+  network: allow
+  destructive_commands: allow
 ```
 
-### 结构化 ToolCall 规划与展示
+这意味着默认开发配置偏开放。
 
-状态：已完成。
+工具实际行为：
+
+- `Read`：可读取 workspace 内相对路径；绝对路径 / `~` 路径允许在 workspace 或 home read roots 下读取。
+- `Write` / `Edit`：只能写 workspace 内路径，防止写出 workspace。
+- `Grep`：在 UTF-8 文本文件中正则搜索。
+- `Glob`：按路径模式列出文件或目录。
+- `Bash`：在 workspace 下执行 shell 命令；如果 `default_shell=allow` 且命令不触发 destructive 策略，则可以直接执行。
+
+安全提醒：
+
+- 当前默认配置适合本地快速开发，不适合直接作为生产安全默认值。
+- 后续建议把高风险权限切换为 `ask` 或 `deny`，并完善审批续跑。
+
+### Session 基础能力
+
+状态：已完成第一版。
 
 已交付：
 
-- `Step.tool_calls`
-- Planner Prompt 中的 `tool_calls` 生成要求
-- Planner 对 LLM `tool_calls` 输出的规范化
-- Executor 优先执行 `step.tool_calls`
-- `agent-system run --show-tool-results`
-- `tests/unit/execution/test_executor_tools.py` 中的结构化 ToolCall 覆盖
-- `tests/unit/api/test_cli.py` 中的工具结果展示覆盖
+- `src/agent_system/runtime/session.py`
+- `SessionRecord`
+- `InMemorySessionStore`
 
-影响范围：
+`SessionRecord` 当前保存：
 
-- Planner 可以产出结构化 `ToolCall`，减少从自然语言 objective 猜参数。
-- Executor 优先执行 `step.tool_calls`，没有结构化调用时才回退到 `suggested_tools + objective` 推断。
-- JSON 事件中保留完整 `tool_results`，方便脚本消费。
-- 普通 CLI 输出默认隐藏完整工具结果，`--show-tool-results` 显示摘要。
+- `session_id`
+- `messages`
+- `recent_events`
+- `recent_tool_results`
+- `recent_plan`
+- `summary`
 
-验证结果：
+已实现方法：
 
-```text
-uv run pytest
-50 passed, 2 skipped
-```
+- `context_summary()`
+- `record_run()`
 
-### 上下文与 Prompt Registry
+当前限制：
 
-状态：已完成。
+- 仅内存存储。
+- 进程退出后 session 丢失。
+- 没有 pending approval 持久化。
+- 没有 SQLite / Postgres 实现。
+- 没有向量记忆。
 
-已交付：
+### Observability
 
-- `src/agent_system/prompts/registry.py`
-- `src/agent_system/prompts/templates/system.md`
-- `src/agent_system/prompts/templates/planner.md`
-- `src/agent_system/prompts/templates/reflector.md`
-- `src/agent_system/context/assembler.py`
-- `src/agent_system/context/budget.py`
-- `tests/unit/prompts/test_prompt_registry.py`
-- `tests/unit/context/test_context_assembler.py`
-
-影响范围：
-
-- Planner system prompt 已从 Python 代码迁移到模板文件。
-- `ContextAssembler` 会拼装 system prompt、planner prompt、用户请求。
-- Planner context 会注入 workspace 信息和工具 schema。
-- Runtime 工厂会把已注册工具 schema 传给 Planner context。
-
-验证结果：
-
-```text
-uv run pytest
-50 passed, 2 skipped
-```
-
-### Skills 模块
-
-状态：已完成。
+状态：已完成第一版。
 
 已交付：
 
-- `src/agent_system/skills/schemas.py`
-- `src/agent_system/skills/base.py`
-- `src/agent_system/skills/registry.py`
-- `src/agent_system/skills/__init__.py`
-- `src/agent_system/skills/builtin/__init__.py`
-- `tests/unit/skills/test_skill_registry.py`
+- `src/agent_system/observability/logging.py`
+- `JsonlEventLogger`
 
-已实现：
-
-- `SkillSchema`
-- `BaseSkill`
-- `SkillRegistry`
-- 默认内置 skills：`coding`、`runtime`、`review`
-- Planner Context 中的 skills schema 注入
-
-影响范围：
-
-- Skills 当前是能力元数据层，不直接执行动作。
-- Runtime 工厂会注册默认 skills，并把 skills schema 交给 `ContextAssembler`。
-- Planner prompt 可以看到可用 skills、触发词、建议工具和 prompt hints。
-- 现有 Runtime、Executor 和 ToolRouter 行为不变。
-
-验证结果：
+默认日志：
 
 ```text
-uv run pytest
-50 passed, 2 skipped
+logs/agent-system.jsonl
 ```
 
-### Runtime 对话入口
+当前记录：
 
-状态：已完成。
+- event_type
+- timestamp
+- session_id
+- task_id
+- user_id
+- workspace_id
+- plan 摘要
+- execution 摘要
+- reflection 摘要
 
-已交付：
+当前限制：
 
-- `agent-system runtime-chat`
-- Runtime 事件到 Assistant 回复的渲染逻辑
-- Runtime 对话历史拼接
-- 可选 LLM 回复合成
-- `--show-events`
-- `tests/unit/api/test_cli.py` 中的 runtime-chat 覆盖
+- 不记录完整 `tool_results`。
+- 没有日志轮转。
+- 没有 trace 查询。
+- 没有 replay。
+- 没有 OpenTelemetry / metrics。
 
-影响范围：
+## 当前主要不足
 
-- Runtime 模式现在可以像对话一样使用。
-- 默认 `runtime-chat` 会先跑 Runtime，再用 `model.chat` 合成自然语言回复。
-- `--show-events` 可用于调试完整 Runtime 事件流。
+### 1. 审批后继续执行未完成
 
-验证结果：
+当前已经能返回：
 
 ```text
-uv run pytest
-50 passed, 2 skipped
+run.waiting_for_tool_approval
 ```
 
-## 当前技术选择
+但缺少：
 
-当前 `pyproject.toml` 已声明：
+- pending approval 数据模型。
+- `/approve <call_id>`。
+- `/deny <call_id>`。
+- `/resume <task_id>`。
+- 审批后把原 ToolCall 设置为 `approved=True` 并继续执行。
 
-- Python：`>=3.11`
-- 包构建：`hatchling`
-- 运行依赖：
-  - `pydantic`
-  - `pyyaml`
-  - `rich`
-  - `typer`
-- 开发依赖：
-  - `pytest`
+### 2. Session / Checkpoint 未持久化
 
-说明：
+当前只有：
 
-- 当前已经实现最小 Runtime 主循环，并已通过配置把 LLM client 接入 `PlannerAgent` 和 Runtime 工厂；工具系统已接入 Runtime `Executor` 的保守执行路径。
-- `pydantic` 已用于 Phase 1 核心数据模型。
-- `typer` 和 `rich` 预留给后续 CLI。
-- `pyyaml` 预留给配置加载。
+- `InMemorySessionStore`
+- `InMemoryCheckpointStore`
 
-## 当前配置
+缺少：
 
-默认配置文件：
+- `SQLiteSessionStore`
+- `SQLiteCheckpointStore`
+- task 查询
+- 进程重启恢复
+
+### 3. Reflector 仍是规则版
+
+当前 Reflector 只根据 step 是否完成判断 done / not done。
+
+缺少：
+
+- LLM Reflector。
+- 对空结果、错误结果、部分完成结果的语义判断。
+- retry / replan / ask_user 的智能判断。
+
+### 4. Executor 仍偏简单
+
+当前 Executor：
+
+- 顺序执行 steps。
+- 优先执行 `step.tool_calls`。
+- 没有 `tool_calls` 时尝试从 `suggested_tools` 推断参数。
+- 没有可执行工具时 step 失败。
+
+缺少：
+
+- `depends_on` 依赖排序。
+- blocked step。
+- 失败分类。
+- 自动重试。
+- DAG 并发。
+
+### 5. MCP / 多 Agent / Web UI 未实现
+
+这些属于后续扩展，建议在单 Agent 闭环稳定后再进入。
+
+## 建议下一步
+
+优先顺序：
+
+1. 工具审批后的继续执行。
+2. SQLite SessionStore / CheckpointStore。
+3. LLM Reflector。
+4. Executor 依赖排序、失败分类和重试策略。
+5. 可观测查询、task 查询和 replay。
+6. MCP / 插件化工具。
+7. 多 Agent / Supervisor。
+8. Web UI / Streaming。
+
+详细路线见 `docs/next-development.md`。
+
+## 交接给后续 Agent 的建议
+
+后续接手时建议先做：
 
 ```text
-configs/default.yaml
+1. 阅读 docs/project-status.md 和 docs/codebase-guide.md。
+2. 跑 uv run pytest。
+3. 跑 uv run agent-system --help。
+4. 确认 configs/default.yaml 的权限是否符合当前开发目标。
+5. 不要重复实现 SessionRecord / InMemorySessionStore。
+6. 优先实现审批续跑，而不是直接进入多 Agent 或 Web UI。
 ```
 
-当前包含：
+修改代码时优先保证：
 
-- Runtime 默认迭代次数和运行模式。
-- 本地 MiniMax 2.5 OpenAI-compatible 模型配置。
-- Context token budget 配置。
-- 初始权限策略。
-- Memory 默认关闭。
-
-注意：
-
-- Shell 默认策略是 `deny`。
-- 网络默认策略是 `deny`。
-- Memory 当前未启用。
-
-## 下一步任务
-
-Runtime 多轮 session 基础能力、`ToolRouter` 权限策略、工具调用审计 metadata，以及工具审批需求事件已经接入。
-
-下一步建议继续完善审批后的继续执行能力：
-
-- 保存待审批的 `ToolCall` 和关联 `task_id`。
-- 增加用户批准 / 拒绝入口。
-- 批准后带 `approved=True` 重新执行对应工具调用。
-- 拒绝后写入结构化拒绝结果，并让 Runtime 给出需要用户输入或替代方案。
-
-如果优先关注 Agent 主体能力，建议下一步接入 LLM 驱动的 Reflector：
-
-- Reflector 使用 LLM 判断工具结果是否满足目标。
-- LLM 输出不可解析时保留当前规则 Reflector 降级。
-- 增加结果不足、需要追问、任务完成三类测试。
-
-验收标准：
-
-- 未审批的高风险工具不会执行。
-- 审批需求以 `run.waiting_for_tool_approval` 事件输出。
-- CLI 能展示工具名、原因和参数摘要。
-- 批准 / 拒绝结果都有结构化记录。
-- `uv run pytest` 通过。
-
-## 暂不处理事项
-
-第一版暂不实现：
-
-- 真实 LLM 调用
-- 多 Agent Supervisor
-- MCP Server
-- Memory Manager
-- 向量数据库
-- Web UI
-- Temporal / Redis / Kafka
-- 复杂权限系统
-- 分布式 Worker
-
-这些内容应等单 Agent Runtime 稳定后再逐步引入。
-
-## 开发约束
-
-后续开发应遵守以下原则：
-
-- 严格按需求做最小改动。
-- 不做无关重构。
-- 新增能力优先参考 `docs/development-plan.md` 的阶段顺序。
-- 数据结构优先参考 `docs/architecture.md`。
-- 每个阶段都补充对应测试。
-- 修改后运行 `uv run pytest` 验证。
-
-## 常用命令
-
-安装开发依赖：
-
-```bash
-pip install -e ".[dev]"
-```
-
-运行测试：
-
-```bash
-uv run pytest
-```
-
-运行 CLI：
-
-```powershell
-uv run agent-system plan "为项目生成一个下一步开发计划"
-uv run agent-system run "帮我分析当前项目"
-uv run agent-system chat
-```
-
-运行本地 MiniMax 集成测试：
-
-```powershell
-$env:AGENT_SYSTEM_RUN_LOCAL_LLM_TESTS='1'
-$env:AGENT_SYSTEM_LLM_BASE_URL='http://localhost:8500'
-$env:AGENT_SYSTEM_LLM_MODEL='MiniMax-M2.5'
-uv run pytest tests\integration
-```
-
-检查项目文件：
-
-```bash
-rg --files
-```
-
-## 给后续 Agent 的接手提示
-
-接手本项目时建议按以下顺序阅读：
-
-1. 先读 `docs/project-status.md`，了解当前状态。
-2. 再读 `docs/development-plan.md`，确认下一阶段任务。
-3. 需要架构细节时读 `docs/architecture.md`。
-4. 开始编码前用 `rg --files` 查看实际文件状态。
-5. 完成修改后运行 `uv run pytest`。
-
+- 现有 CLI 不回退。
+- 现有 Runtime 事件流不随意破坏。
+- `ToolCall` / `ToolResult` 协议保持兼容。
+- `Critique` 协议保持兼容。
+- 新能力先补测试，再改实现。
