@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,12 @@ class StepResult(BaseModel):
     step_id: str
     ok: bool
     summary: str
+    status: Literal["success", "failed", "blocked", "skipped", "waiting"] = "success"
+    error_type: str | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if "status" not in self.model_fields_set and not self.ok:
+            self.status = "failed"
 
 
 class ExecutionResult(BaseModel):
@@ -23,10 +30,18 @@ class ExecutionResult(BaseModel):
     tool_results: list[ToolResult] = Field(default_factory=list)
 
     def summary(self) -> dict[str, object]:
+        error_types = [
+            step.error_type
+            for step in self.step_results
+            if step.error_type is not None
+        ]
         return {
             "completed_steps": [step.step_id for step in self.step_results if step.ok],
             "failed_steps": [step.step_id for step in self.step_results if not step.ok],
             "tool_result_count": len(self.tool_results),
+            "blocked_steps": [step.step_id for step in self.step_results if step.status == "blocked"],
+            "waiting_steps": [step.step_id for step in self.step_results if step.status == "waiting"],
+            "error_types": list(dict.fromkeys(error_types)),
         }
 
 
@@ -37,35 +52,85 @@ class Executor:
     async def execute(self, plan: Plan, state: AgentState) -> ExecutionResult:
         step_results: list[StepResult] = []
         tool_results: list[ToolResult] = []
+        result_by_step: dict[str, StepResult] = {}
+        missing_dependencies, cycle_steps, ordered_steps = _dependency_plan(plan.steps)
 
-        for step in plan.steps:
+        for step in ordered_steps:
             if step.id in state.completed_steps:
+                continue
+            if step.id in cycle_steps:
+                result = StepResult(
+                    step_id=step.id,
+                    ok=False,
+                    status="blocked",
+                    error_type="dependency_cycle",
+                    summary=f"Step is blocked by a dependency cycle: {step.title}",
+                )
+                step_results.append(result)
+                result_by_step[step.id] = result
+                continue
+            if missing_dependencies.get(step.id):
+                missing = ", ".join(missing_dependencies[step.id])
+                result = StepResult(
+                    step_id=step.id,
+                    ok=False,
+                    status="blocked",
+                    error_type="dependency_missing",
+                    summary=f"Step is blocked by missing dependencies: {missing}",
+                )
+                step_results.append(result)
+                result_by_step[step.id] = result
+                continue
+            failed_dependencies = [
+                dependency
+                for dependency in step.depends_on
+                if not _dependency_succeeded(dependency, result_by_step, state)
+            ]
+            if failed_dependencies:
+                failed = ", ".join(failed_dependencies)
+                result = StepResult(
+                    step_id=step.id,
+                    ok=False,
+                    status="blocked",
+                    error_type="dependency_failed",
+                    summary=f"Step is blocked by failed dependencies: {failed}",
+                )
+                step_results.append(result)
+                result_by_step[step.id] = result
                 continue
 
             step_tool_results = await self._execute_step_tools(step)
             if step_tool_results:
                 tool_results.extend(step_tool_results)
                 ok = all(result.ok for result in step_tool_results)
-                step_results.append(
-                    StepResult(
-                        step_id=step.id,
-                        ok=ok,
-                        summary=self._tool_step_summary(step, step_tool_results),
-                    )
+                error_type = _classify_tool_failure(step_tool_results)
+                status: Literal["success", "failed", "blocked", "skipped", "waiting"] = (
+                    "success" if ok else "waiting" if error_type == "approval_required" else "failed"
                 )
+                step_result = StepResult(
+                    step_id=step.id,
+                    ok=ok,
+                    status=status,
+                    error_type=error_type,
+                    summary=self._tool_step_summary(step, step_tool_results),
+                )
+                step_results.append(step_result)
+                result_by_step[step.id] = step_result
                 if ok:
                     state.completed_steps.add(step.id)
                 if _has_approval_required(step_tool_results):
                     break
                 continue
 
-            step_results.append(
-                StepResult(
-                    step_id=step.id,
-                    ok=False,
-                    summary=f"No executable tool call for step: {step.title}",
-                )
+            step_result = StepResult(
+                step_id=step.id,
+                ok=False,
+                status="failed",
+                error_type="no_executable_tool",
+                summary=f"No executable tool call for step: {step.title}",
             )
+            step_results.append(step_result)
+            result_by_step[step.id] = step_result
 
         return ExecutionResult(step_results=step_results, tool_results=tool_results)
 
@@ -173,3 +238,76 @@ def _is_approval_required(result: ToolResult) -> bool:
         return True
     audit = result.metadata.get("audit", {})
     return isinstance(audit, dict) and audit.get("status") == "approval_required"
+
+
+def _dependency_plan(steps: list[Step]) -> tuple[dict[str, list[str]], set[str], list[Step]]:
+    step_by_id = {step.id: step for step in steps}
+    original_order = {step.id: index for index, step in enumerate(steps)}
+    missing_dependencies = {
+        step.id: [dependency for dependency in step.depends_on if dependency not in step_by_id]
+        for step in steps
+    }
+    missing_dependencies = {
+        step_id: dependencies
+        for step_id, dependencies in missing_dependencies.items()
+        if dependencies
+    }
+
+    incoming: dict[str, set[str]] = {
+        step.id: {dependency for dependency in step.depends_on if dependency in step_by_id}
+        for step in steps
+    }
+    dependents: dict[str, list[str]] = {step.id: [] for step in steps}
+    for step_id, dependencies in incoming.items():
+        for dependency in dependencies:
+            if step_id not in dependents[dependency]:
+                dependents[dependency].append(step_id)
+
+    ready = sorted(
+        [step_id for step_id, dependencies in incoming.items() if not dependencies],
+        key=original_order.__getitem__,
+    )
+    ordered_ids: list[str] = []
+    while ready:
+        step_id = ready.pop(0)
+        ordered_ids.append(step_id)
+        for dependent_id in sorted(dependents[step_id], key=original_order.__getitem__):
+            incoming[dependent_id].remove(step_id)
+            if not incoming[dependent_id]:
+                ready.append(dependent_id)
+        ready.sort(key=original_order.__getitem__)
+
+    cycle_steps = set(step_by_id) - set(ordered_ids)
+    ordered_ids.extend(step.id for step in steps if step.id in cycle_steps)
+    return missing_dependencies, cycle_steps, [step_by_id[step_id] for step_id in ordered_ids]
+
+
+def _dependency_succeeded(
+    dependency: str,
+    result_by_step: dict[str, StepResult],
+    state: AgentState,
+) -> bool:
+    if dependency in state.completed_steps:
+        return True
+    result = result_by_step.get(dependency)
+    return result is not None and result.ok
+
+
+def _classify_tool_failure(tool_results: list[ToolResult]) -> str | None:
+    for result in tool_results:
+        if result.ok:
+            continue
+        if _is_approval_required(result):
+            return "approval_required"
+        audit = result.metadata.get("audit", {})
+        audit_status = audit.get("status") if isinstance(audit, dict) else None
+        content = result.content if isinstance(result.content, dict) else {}
+        error = str(result.error or content.get("error") or "")
+        if error.startswith("unknown tool:"):
+            return "unknown_tool"
+        if audit_status == "validation_failed":
+            return "validation_failed"
+        if "required_args" in content or "input_schema" in content:
+            return "validation_failed"
+        return "tool_runtime_error"
+    return None
